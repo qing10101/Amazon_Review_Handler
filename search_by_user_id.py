@@ -14,16 +14,15 @@ def build_url(user_id):
     return f"https://www.amazon.com/gp/profile/amzn1.account.{user_id}/ref=cm_cr_arp_d_pdp?ie=UTF8&type=review"
 
 
-def scrape_user_reviews_truly_final(user_id):
+def scrape_user_reviews_honest_final(user_id):
     """
-    Scrapes user reviews with the final, correct logic to extract the star
-    rating from the element's class name.
+    Scrapes all available review data, correctly labeling each piece of
+    information and acknowledging the limitations of the source page.
     """
     reviews = []
     current_url = build_url(user_id)
 
     options = webdriver.ChromeOptions()
-    # Comment out '--headless' to watch the script run.
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
@@ -48,8 +47,6 @@ def scrape_user_reviews_truly_final(user_id):
         print("Success: Located the parent review container.")
     except Exception:
         print(f"Error: Timed out waiting for the container '{parent_container_selector}'.")
-        driver.save_screenshot('final_error_screenshot.png')
-        print("Saved a screenshot to 'final_error_screenshot.png'.")
         driver.quit()
         return []
 
@@ -70,26 +67,25 @@ def scrape_user_reviews_truly_final(user_id):
             if not detail_container:
                 continue
 
-            # === RATING EXTRACTION: THE FINAL FIX ===
-            rating_text = "Not found"
-            # Find the <i> tag that has a class containing "a-star-"
+            # Extract rating from class name
+            rating_text = "N/A"
             rating_tag = detail_container.select_one('i[class*="a-star-"]')
             if rating_tag:
-                # The 'class' attribute is a list of strings, e.g., ['a-icon', 'a-icon-star', 'a-star-5', 'review-stars']
                 class_list = rating_tag.get('class', [])
-                # Find the specific class that tells us the rating
                 for cls in class_list:
                     if cls.startswith('a-star-'):
-                        # e.g., 'a-star-5' -> split by '-' -> ['a', 'star', '5'] -> take last part '5'
                         rating_value = cls.split('-')[-1]
                         rating_text = f"{rating_value} out of 5 stars"
-                        break  # Exit the loop once we've found our rating
+                        break
+
+            # Get alt text from image, acknowledging it might be empty
+            product_alt_text = card.select_one("img").get('alt', '').strip()
 
             review_data = {
                 'review_title': detail_container.select_one("span.review-title").get_text(strip=True),
                 'review_body': detail_container.select_one("span.review-description").get_text(strip=True),
                 'rating': rating_text,
-                'product_image_alt': card.select_one("img")['alt'],
+                'product_info': product_alt_text,
                 'review_link': 'https://www.amazon.com' + card.select_one("a.a-link-normal")['href']
             }
             reviews.append(review_data)
@@ -101,7 +97,7 @@ def scrape_user_reviews_truly_final(user_id):
 
 
 def print_reviews(reviews_list):
-    """Formats and prints the scraped review data."""
+    """Formats and prints the scraped review data with correct labels."""
     if not reviews_list:
         print("\nScraping complete, but no valid reviews were found.")
         return
@@ -110,19 +106,25 @@ def print_reviews(reviews_list):
     for i, review in enumerate(reviews_list, 1):
         print(f"--- Review {i} ---")
         print(f"Review Title: {review['review_title']}")
-        print(f"Product: {review['product_image_alt']}")
         print(f"Rating: {review['rating']}")
-        print(f"Snippet: {review['review_body']}")
-        print(f"Link to Full Review: {review['review_link']}")
+
+        # Correctly handle the product information
+        if review['product_info']:
+            print(f"Product Info (from image): {review['product_info']}")
+        else:
+            print("Product Info: (Not available on this page)")
+
+        print(f"Review Snippet: {review['review_body']}")
+        print(f"Link to Full Review/Product: {review['review_link']}")
         print("-" * 20 + "\n")
 
 
 if __name__ == "__main__":
-    print("Amazon Review Finder (Truly Final Version)")
+    print("Amazon Review Finder (Honest & Final Version)")
     print("=" * 45)
     user_id_input = input("Please enter the Amazon User ID: ").strip()
     if not user_id_input:
         print("No User ID entered. Exiting.")
     else:
-        scraped_reviews = scrape_user_reviews_truly_final(user_id_input)
+        scraped_reviews = scrape_user_reviews_honest_final(user_id_input)
         print_reviews(scraped_reviews)
