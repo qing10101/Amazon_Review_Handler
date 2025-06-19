@@ -120,7 +120,7 @@ def print_reviews(reviews_list):
 
 
 if __name__ == "__main__":
-    print("Amazon Review Finder (Honest & Final Version)")
+    print("Amazon Review Finder")
     print("=" * 45)
     user_id_input = input("Please enter the Amazon User ID: ").strip()
     if not user_id_input:
