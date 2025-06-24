@@ -1,10 +1,11 @@
 # ==============================================================================
-#      LIMITED & VERBOSE SENTIMENT ANALYSIS SCRIPT (FOR JSON LINES)
+#      ENHANCED SENTIMENT ANALYSIS SCRIPT WITH ADVANCED VISUALIZATIONS
 # ==============================================================================
 #
-# This script performs sentiment analysis on a JSON Lines file but includes
-# a configurable limit on the number of entries to process. This is essential
-# for handling very large files efficiently.
+# This script performs sentiment analysis on a JSON Lines file and generates
+# a variety of advanced visualizations, including density curves, heatmaps,
+# and bubble charts, in addition to standard bar and scatter plots.
+# It includes a configurable limit for processing large files.
 #
 # ==============================================================================
 
@@ -15,9 +16,11 @@ import seaborn as sns
 from collections import Counter
 from textblob import TextBlob
 import sys
+import pandas as pd  # Added for advanced data manipulation
+import numpy as np  # Added for numerical operations (e.g., jitter)
 
 
-# --- 2. DEFINE THE CORE ANALYSIS FUNCTION ---
+# --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
 
 def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     """
@@ -39,12 +42,9 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
-                # --- THIS IS THE KEY LOGIC FOR LIMITING REVIEWS ---
-                # Check if we have reached the specified limit.
-                # This check happens *before* processing the line for max efficiency.
                 if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
                     print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
-                    break  # Exit the loop entirely.
+                    break
 
                 if not line.strip():
                     continue
@@ -82,7 +82,7 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     return analyzed_reviews
 
 
-# --- 3. DEFINE THE SUMMARY FUNCTION ---
+# --- 3. DEFINE THE SUMMARY FUNCTION (Unchanged) ---
 
 def print_analysis_summary(analyzed_reviews):
     """Prints a detailed summary of the analysis results to the terminal."""
@@ -121,11 +121,120 @@ def print_analysis_summary(analyzed_reviews):
     print("[PHASE 2 COMPLETE]")
 
 
-# --- 4. PLOTTING FUNCTIONS (Unchanged) ---
-# These do not need to be modified as they just work with the data they receive.
+# --- 4. PLOTTING FUNCTIONS ---
+# This section has been expanded with new graph types.
+
+def plot_sentiment_density_curve(analyzed_reviews):
+    """
+    Generates a density curve (KDE plot) of sentiment polarities.
+    This shows the distribution (or "spectrum") of sentiment scores.
+    This plot type satisfies the "Spectrum," "Density," and "Curve" requirements.
+    """
+    print("  -> Creating Sentiment Polarity Density Curve (Spectrum Graph)...")
+    polarities = [review['sentiment_polarity'] for review in analyzed_reviews]
+
+    plt.figure(figsize=(10, 6))
+    sns.kdeplot(polarities, fill=True, color="skyblue", bw_adjust=0.5)
+    plt.title('Spectrum of Sentiment Polarity (Density Curve)', fontsize=16)
+    plt.xlabel('Sentiment Polarity (-1 to 1)')
+    plt.ylabel('Density')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.axvline(0, color='grey', linestyle='--', label='Neutral')
+    plt.text(0.05, plt.gca().get_ylim()[1] * 0.9, 'Positive ->', ha='left', va='center', backgroundcolor='white')
+    plt.text(-0.05, plt.gca().get_ylim()[1] * 0.9, '<- Negative', ha='right', va='center', backgroundcolor='white')
+    plt.legend()
+
+
+def plot_rating_sentiment_heatmap(analyzed_reviews):
+    """
+    Generates a heatmap to show the frequency of each sentiment label
+    for each star rating.
+    """
+    print("  -> Creating Rating vs. Sentiment Heatmap...")
+    df = pd.DataFrame(analyzed_reviews)
+
+    if 'rating' not in df.columns or 'sentiment_label' not in df.columns:
+        print("     [SKIP] Heatmap requires 'rating' and 'sentiment_label' data.")
+        return
+
+    contingency_table = pd.crosstab(df['sentiment_label'], df['rating'])
+    contingency_table = contingency_table.reindex(['Positive', 'Neutral', 'Negative'])
+
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(contingency_table, annot=True, fmt='d', cmap='YlGnBu', linewidths=.5)
+    plt.title('Heatmap of Sentiment Label vs. Star Rating', fontsize=16)
+    plt.xlabel('Star Rating')
+    plt.ylabel('Sentiment Label')
+
+
+def plot_sentiment_bubble_chart(analyzed_reviews):
+    """
+    Generates a bubble chart to visualize three dimensions:
+    - X-axis: Star Rating
+    - Y-axis: Sentiment Polarity
+    - Bubble Size: Length of the review text
+    """
+    print("  -> Creating Sentiment Bubble Chart...")
+    df = pd.DataFrame(analyzed_reviews)
+
+    if 'rating' not in df.columns or 'text' not in df.columns:
+        print("     [SKIP] Bubble chart requires 'rating' and 'text' data.")
+        return
+
+    df['text_length'] = df['text'].str.len().fillna(0) + 1
+    color_map = {'Positive': 'green', 'Neutral': 'grey', 'Negative': 'red'}
+    df['color'] = df['sentiment_label'].map(color_map)
+
+    # Add jitter to x-axis to prevent points from overlapping vertically
+    x_jitter = 0.15 * np.random.randn(len(df['rating']))
+
+    plt.figure(figsize=(12, 8))
+    scatter = plt.scatter(
+        x=df['rating'] + x_jitter,
+        y=df['sentiment_polarity'],
+        s=df['text_length'] / 4,  # Scale down size for better visualization
+        c=df['color'],
+        alpha=0.5,
+        edgecolors='w',
+        linewidth=0.5
+    )
+
+    plt.title('Bubble Chart: Rating vs. Sentiment (Size = Review Length)', fontsize=16)
+    plt.xlabel('Star Rating (with jitter)')
+    plt.ylabel('Sentiment Polarity (-1 to 1)')
+    plt.grid(True, linestyle='--', alpha=0.6)
+
+    # Create a legend for colors and sizes
+    color_handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=c, markersize=10, label=l)
+                     for l, c in color_map.items()]
+    size_handles = [plt.scatter([], [], s=s / 4, c='gray', alpha=0.6, label=f'{s} chars') for s in [100, 500, 1000]]
+    plt.legend(title="Legend", handles=color_handles + size_handles)
+
+
+def plot_avg_sentiment_by_rating_curve(analyzed_reviews):
+    """
+    Generates a curve graph showing the average sentiment polarity for each
+    star rating.
+    """
+    print("  -> Creating Average Sentiment by Rating Curve...")
+    df = pd.DataFrame(analyzed_reviews)
+    if 'rating' not in df.columns:
+        print("     [SKIP] Curve graph requires 'rating' data.")
+        return
+
+    avg_sentiment = df.groupby('rating')['sentiment_polarity'].mean().reset_index()
+
+    plt.figure(figsize=(10, 6))
+    sns.lineplot(data=avg_sentiment, x='rating', y='sentiment_polarity', marker='o', color='purple', linewidth=2.5)
+    plt.title('Curve of Average Sentiment Polarity per Star Rating', fontsize=16)
+    plt.xlabel('Star Rating')
+    plt.ylabel('Average Sentiment Polarity')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.xticks(avg_sentiment['rating'])
+
 
 def plot_sentiment_distribution(analyzed_reviews):
-    print("\n[PHASE 3: GENERATING GRAPHS]")
+    """Original bar chart plot."""
     print("  -> Creating Sentiment Distribution Bar Chart...")
     labels = [review['sentiment_label'] for review in analyzed_reviews]
     sentiment_counts = Counter(labels)
@@ -142,6 +251,7 @@ def plot_sentiment_distribution(analyzed_reviews):
 
 
 def plot_rating_vs_sentiment(analyzed_reviews):
+    """Original scatter plot."""
     print("  -> Creating Rating vs. Sentiment Score Scatter Plot...")
     ratings = [review.get('rating', 0) for review in analyzed_reviews]
     polarities = [review['sentiment_polarity'] for review in analyzed_reviews]
@@ -151,7 +261,6 @@ def plot_rating_vs_sentiment(analyzed_reviews):
     plt.xlabel('Original Star Rating')
     plt.ylabel('Sentiment Polarity (-1 to +1)')
     plt.grid(True)
-    print("[PHASE 3 COMPLETE]")
 
 
 # --- 5. SCRIPT EXECUTION BLOCK ---
@@ -160,26 +269,21 @@ if __name__ == "__main__":
     # ======================================================================
     #                          CONFIGURATION
     # ======================================================================
-    # Set the maximum number of reviews to analyze from the file.
-    # - To analyze the first 100 reviews, set this to 100.
-    # - To analyze the entire file, set this to None.
-    MAX_REVIEWS_TO_ANALYZE = 1000000
+    MAX_REVIEWS_TO_ANALYZE = 5000  # Adjusted for quicker demo of new plots
     # ======================================================================
 
     print("=" * 60)
-    print("          SENTIMENT ANALYSIS PROGRAM INITIALIZED")
+    print("      ENHANCED SENTIMENT ANALYSIS PROGRAM INITIALIZED")
     print("=" * 60)
 
     json_file = "Cell_Phones_and_Accessories.jsonl"
     print(f"Target file: '{json_file}'")
 
-    # Update the startup message to reflect the limit.
     if MAX_REVIEWS_TO_ANALYZE is not None:
         print(f"Analysis limit: Processing a maximum of {MAX_REVIEWS_TO_ANALYZE} reviews.")
     else:
         print("Analysis limit: Processing all reviews in the file.")
 
-    # Pass the limit to the analysis function.
     analysis_results = analyze_review_sentiment_json_lines(
         json_file,
         max_reviews=MAX_REVIEWS_TO_ANALYZE
@@ -187,8 +291,19 @@ if __name__ == "__main__":
 
     if analysis_results:
         print_analysis_summary(analysis_results)
+
+        print("\n[PHASE 3: GENERATING GRAPHS]")
+        # --- Call all plotting functions ---
+        # New plots fulfilling the request
+        plot_sentiment_density_curve(analysis_results)  # Spectrum/Density/Curve
+        plot_rating_sentiment_heatmap(analysis_results)  # Heatmap
+        plot_sentiment_bubble_chart(analysis_results)  # Bubble
+        plot_avg_sentiment_by_rating_curve(analysis_results)  # Explicit Curve
+
+        # Original plots
         plot_sentiment_distribution(analysis_results)
         plot_rating_vs_sentiment(analysis_results)
+        print("[PHASE 3 COMPLETE]")
 
         print("\n[FINAL STEP: DISPLAYING PLOTS]")
         print("Close the plot windows to exit the program.")
