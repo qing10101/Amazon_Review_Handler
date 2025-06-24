@@ -269,7 +269,8 @@ if __name__ == "__main__":
     # ======================================================================
     #                          CONFIGURATION
     # ======================================================================
-    MAX_REVIEWS_TO_ANALYZE = 5000  # Adjusted for quicker demo of new plots
+    MAX_REVIEWS_TO_ANALYZE = int(input("Enter number of entries for processing.\nEnter zero or negative for processing"
+                                       "entire file:"))
     # ======================================================================
 
     print("=" * 60)
@@ -279,7 +280,7 @@ if __name__ == "__main__":
     json_file = "Cell_Phones_and_Accessories.jsonl"
     print(f"Target file: '{json_file}'")
 
-    if MAX_REVIEWS_TO_ANALYZE is not None:
+    if MAX_REVIEWS_TO_ANALYZE > 0:
         print(f"Analysis limit: Processing a maximum of {MAX_REVIEWS_TO_ANALYZE} reviews.")
     else:
         print("Analysis limit: Processing all reviews in the file.")

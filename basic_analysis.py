@@ -153,7 +153,8 @@ def create_visual_dashboard(df):
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
-    MAX_REVIEWS_TO_ANALYZE = 100000
+    MAX_REVIEWS_TO_ANALYZE = int(input("Enter number of entries for processing.\nEnter zero or negative for processing"
+                                       "entire file:"))
 
     print("=" * 50)
     print("     COMPREHENSIVE STATISTICAL ANALYZER")
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     json_file = "Cell_Phones_and_Accessories.jsonl"
     print(f"Target file: '{json_file}'")
 
-    if MAX_REVIEWS_TO_ANALYZE is not None:
+    if MAX_REVIEWS_TO_ANALYZE > 0:
         print(f"Processing limit: Analyzing a maximum of {MAX_REVIEWS_TO_ANALYZE:,} reviews.")
     else:
         print("Processing limit: Analyzing all reviews in the file.")
