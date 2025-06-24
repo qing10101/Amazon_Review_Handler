@@ -133,7 +133,8 @@ if __name__ == "__main__":
     # Set the maximum number of entries (lines) to read from the file.
     # - To process only the first 10,000 entries, set this to 10000.
     # - To process the entire file, set this to None.
-    MAX_ENTRIES_TO_PROCESS = 10000
+    MAX_ENTRIES_TO_PROCESS = int(input("Enter number of entries for processing.\nEnter zero or negative for processing "
+                                       "entire file"))
     # ======================================================================
 
     print("=" * 60)
@@ -141,8 +142,8 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print(f"Target file: '{INPUT_JSONL_FILE}'")
-    if MAX_ENTRIES_TO_PROCESS is not None:
-         print(f"Processing limit: First {MAX_ENTRIES_TO_PROCESS} entries.")
+    if MAX_ENTRIES_TO_PROCESS > 0:
+        print(f"Processing limit: First {MAX_ENTRIES_TO_PROCESS} entries.")
     else:
         print("Processing limit: None (entire file will be processed).")
 
