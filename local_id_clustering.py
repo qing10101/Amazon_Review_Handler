@@ -133,8 +133,8 @@ if __name__ == "__main__":
     # Set the maximum number of entries (lines) to read from the file.
     # - To process only the first 10,000 entries, set this to 10000.
     # - To process the entire file, set this to None.
-    MAX_ENTRIES_TO_PROCESS = int(input("Enter number of entries for processing.\nEnter zero or negative for processing "
-                                       "entire file"))
+    MAX_ENTRIES_TO_PROCESS = int(input("Enter number of entries for processing.\nEnter zero or negative for processing"
+                                       "entire file:"))
     # ======================================================================
 
     print("=" * 60)
