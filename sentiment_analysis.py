@@ -62,8 +62,8 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
                 else:
                     sentiment = "Neutral"
 
-                print(f"  -> Processing Review #{i + 1}...")
-                print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
 
                 review['sentiment_polarity'] = polarity
                 review['sentiment_label'] = sentiment

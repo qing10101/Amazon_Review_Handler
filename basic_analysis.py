@@ -1,10 +1,12 @@
 # ==============================================================================
-#            COMPREHENSIVE STATISTICAL & GRAPHICAL ANALYZER
+#      COMPREHENSIVE STATISTICAL & GRAPHICAL ANALYZER (IMPROVED)
 # ==============================================================================
 #
 # This single script performs a full analysis of the review data:
-#   1. It prints a detailed statistical "deep dive" report to the terminal.
-#   2. It then generates and displays a graphical dashboard for visual insights.
+#   1. It prints a detailed statistical "deep dive" report to the terminal,
+#      now with robust quantile analysis for skewed data.
+#   2. It then generates and displays a graphical dashboard, using a log scale
+#      for better visualization of skewed distributions.
 #
 # Required libraries: pip install pandas matplotlib seaborn
 #
@@ -81,9 +83,17 @@ def print_statistical_deep_dive(df):
     print(pd.DataFrame({'Count': rating_counts, 'Percentage': rating_percent.round(2)}).to_string())
     print("-" * 50)
 
-    # Review Length Analysis
+    # --- MODIFIED: REVIEW TEXT LENGTH ANALYSIS ---
     print("\n--- REVIEW TEXT LENGTH ANALYSIS (in characters) ---")
-    print(df['text_length'].describe().apply("{:,.2f}".format).to_string())
+    print("This data is heavily skewed. Quantiles give a better picture than the mean.")
+    # Define specific quantiles to get a better sense of the distribution
+    quantiles = [0.25, 0.5, 0.75, 0.90, 0.95, 0.99, 1.0]
+    length_desc = df['text_length'].describe(percentiles=quantiles)
+    print(length_desc.apply("{:,.1f}".format).to_string())
+    print("\nInterpretation:")
+    print(f"  - 50% of reviews (the median) are shorter than {length_desc.loc['50%']:.0f} characters.")
+    print(f"  - 95% of reviews are shorter than {length_desc.loc['95%']:.0f} characters.")
+    print(f"  - The longest review is {length_desc.loc['max']:.0f} characters long, an extreme outlier.")
     print("-" * 50)
 
     # Time-Based Analysis
@@ -110,9 +120,13 @@ def create_visual_dashboard(df):
     sns.countplot(ax=axes[0, 0], x='rating', data=df, palette='viridis')
     axes[0, 0].set_title('Distribution of Star Ratings', fontsize=14)
 
-    # Plot 2: Review Text Length Distribution
-    sns.histplot(ax=axes[0, 1], data=df, x='text_length', bins=30, kde=True, color='purple')
-    axes[0, 1].set_title('Distribution of Review Text Length', fontsize=14)
+    # --- MODIFIED: Plot 2: Review Text Length Distribution with Log Scale ---
+    # Using a log scale is ideal for visualizing heavily skewed data like text length.
+    # It makes the distribution of the vast majority of reviews visible.
+    sns.histplot(ax=axes[0, 1], data=df, x='text_length', bins=50, color='purple', log_scale=True)
+    axes[0, 1].set_title('Distribution of Review Text Length (Log Scale)', fontsize=14)
+    axes[0, 1].set_xlabel('Text Length (characters) - Log Scaled')
+
 
     # Plot 3: Verified Purchase
     verified_counts = df['verified_purchase'].value_counts()
@@ -139,7 +153,7 @@ def create_visual_dashboard(df):
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
-    MAX_REVIEWS_TO_ANALYZE = 1000000
+    MAX_REVIEWS_TO_ANALYZE = 100000
 
     print("=" * 50)
     print("     COMPREHENSIVE STATISTICAL ANALYZER")
