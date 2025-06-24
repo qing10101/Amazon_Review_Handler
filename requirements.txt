@@ -1,0 +1,10 @@
+# For data manipulation and numerical operations
+pandas
+numpy
+
+# For sentiment analysis
+textblob
+
+# For plotting and visualization
+matplotlib
+seaborn
