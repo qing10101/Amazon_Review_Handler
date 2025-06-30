@@ -10,6 +10,7 @@
 # ==============================================================================
 
 # --- 1. IMPORT LIBRARIES ---
+import re
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -18,9 +19,107 @@ from textblob import TextBlob
 import sys
 import pandas as pd  # Added for advanced data manipulation
 import numpy as np  # Added for numerical operations (e.g., jitter)
+from gemini_llm_handler import ask_gemini
+
+
+def parse_first_number_from_llm_response(text: str):
+    """
+    Parses the first number (integer or float, positive or negative) from a string.
+
+    Args:
+        text: The input string to search for a number.
+
+    Returns:
+        The first number found as an int or float, or None if no number is found.
+    """
+    # This regular expression is designed to find the first integer or float.
+    # -?         - an optional negative sign
+    # \d+        - one or more digits
+    # (\.\d+)?   - an optional decimal point followed by one or more digits
+    # The combination covers integers (e.g., "123", "-45") and floats (e.g., "19.99", "-0.5").
+    match = re.search(r'-?\d+(\.\d+)?', text)
+
+    if match:
+        # If a match is found, extract the matched string
+        number_str = match.group(0)
+
+        # Convert the string to a number (float or int)
+        if '.' in number_str:
+            return float(number_str)
+        else:
+            return int(number_str)
+
+    # If no number is found, return None
+    return None
+
+
+def llm_prompt_constructor(review_text:str):
+    prompt = (f"You are asked to perform sentiment analysis for a user review.\nThe review is: {review_text}\n"
+              f"Respond with a sentiment score between -1 (extreme negative) and 1 (extreme positive)")
+    return prompt
 
 
 # --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
+def llm_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
+    """
+    Loads and analyzes reviews from a JSON Lines file, stopping after
+    'max_reviews' have been processed.
+
+    Args:
+        file_path (str): The path to the file.
+        max_reviews (int, optional): The maximum number of reviews to analyze.
+                                     If None, the entire file is processed.
+                                     Defaults to None.
+    Returns:
+        list: A list of review dictionaries with added sentiment data.
+    """
+    analyzed_reviews = []
+    print("\n[PHASE 1: ANALYZING REVIEWS]")
+    print("-" * 30)
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
+                    print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
+                    break
+
+                if not line.strip():
+                    continue
+
+                review = json.loads(line)
+                combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+
+                response = ask_gemini(llm_prompt_constructor(combined_text))
+                polarity = parse_first_number_from_llm_response(response)
+
+                if polarity > 0.05:
+                    sentiment = "Positive"
+                elif polarity < -0.05:
+                    sentiment = "Negative"
+                else:
+                    sentiment = "Neutral"
+
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+
+                review['sentiment_polarity'] = polarity
+                review['sentiment_label'] = sentiment
+                analyzed_reviews.append(review)
+
+    except FileNotFoundError:
+        print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting analysis.")
+        print(f"        Details: {e}")
+        return None
+
+    print("-" * 30)
+    print("[PHASE 1 COMPLETE]")
+    return analyzed_reviews
+
+
 
 def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     """
@@ -55,9 +154,9 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
                 blob = TextBlob(combined_text)
                 polarity = blob.sentiment.polarity
 
-                if polarity > 0.1:
+                if polarity > 0.05:
                     sentiment = "Positive"
-                elif polarity < -0.1:
+                elif polarity < -0.05:
                     sentiment = "Negative"
                 else:
                     sentiment = "Neutral"
