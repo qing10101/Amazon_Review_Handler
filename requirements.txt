@@ -12,3 +12,4 @@ recordlinkage~=0.16
 beautifulsoup4~=4.13.4
 selenium~=4.33.0
 google~=3.0.0
+requests~=2.32.3
