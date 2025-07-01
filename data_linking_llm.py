@@ -65,7 +65,7 @@ def process_two_blocks(block1, block2):
                 f"Respond with a short conclusion"
             )
 
-            reasons = gemini_llm_handler.ask_gemini(prompt)
+            reasons = gemini_llm_handler.ask_gemini_async(prompt)
 
             matches.append((record1['review_id'], record2['review_id'], reasons['match'], reasons['reason']))
     return matches
