@@ -20,6 +20,7 @@ import sys
 import pandas as pd  # Added for advanced data manipulation
 import numpy as np  # Added for numerical operations (e.g., jitter)
 from gemini_llm_handler import ask_gemini
+from ollama_llm_handler import ask_ollama
 
 
 def parse_first_number_from_llm_response(text: str):
@@ -55,12 +56,73 @@ def parse_first_number_from_llm_response(text: str):
 
 def llm_prompt_constructor(review_text:str):
     prompt = (f"You are asked to perform sentiment analysis for a user review.\nThe review is: {review_text}\n"
-              f"Respond with a sentiment score between -1 (extreme negative) and 1 (extreme positive)")
+              f"Respond with a sentiment score with two digits after decimal that is between -1 (extreme negative) and "
+              f"1 (extreme positive)")
     return prompt
 
 
 # --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
-def llm_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
+def ollama_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
+    """
+    Loads and analyzes reviews from a JSON Lines file, stopping after
+    'max_reviews' have been processed.
+
+    Args:
+        file_path (str): The path to the file.
+        max_reviews (int, optional): The maximum number of reviews to analyze.
+                                     If None, the entire file is processed.
+                                     Defaults to None.
+    Returns:
+        list: A list of review dictionaries with added sentiment data.
+    """
+    analyzed_reviews = []
+    print("\n[PHASE 1: ANALYZING REVIEWS]")
+    print("-" * 30)
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
+                    print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
+                    break
+
+                if not line.strip():
+                    continue
+
+                review = json.loads(line)
+                combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+
+                response = ask_ollama(llm_prompt_constructor(combined_text))
+                polarity = parse_first_number_from_llm_response(response)
+
+                if polarity > 0.05:
+                    sentiment = "Positive"
+                elif polarity < -0.05:
+                    sentiment = "Negative"
+                else:
+                    sentiment = "Neutral"
+
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+
+                review['sentiment_polarity'] = polarity
+                review['sentiment_label'] = sentiment
+                analyzed_reviews.append(review)
+
+    except FileNotFoundError:
+        print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting analysis.")
+        print(f"        Details: {e}")
+        return None
+
+    print("-" * 30)
+    print("[PHASE 1 COMPLETE]")
+    return analyzed_reviews
+
+
+def gemini_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     """
     Loads and analyzes reviews from a JSON Lines file, stopping after
     'max_reviews' have been processed.
@@ -118,7 +180,6 @@ def llm_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     print("-" * 30)
     print("[PHASE 1 COMPLETE]")
     return analyzed_reviews
-
 
 
 def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
@@ -260,7 +321,7 @@ def plot_rating_sentiment_heatmap(analyzed_reviews):
     contingency_table = contingency_table.reindex(['Positive', 'Neutral', 'Negative'])
 
     plt.figure(figsize=(10, 7))
-    sns.heatmap(contingency_table, annot=True, fmt='d', cmap='YlGnBu', linewidths=.5)
+    sns.heatmap(contingency_table, annot=True, fmt='.2f', cmap='YlGnBu', linewidths=.5)
     plt.title('Heatmap of Sentiment Label vs. Star Rating', fontsize=16)
     plt.xlabel('Star Rating')
     plt.ylabel('Sentiment Label')
@@ -384,7 +445,7 @@ if __name__ == "__main__":
     else:
         print("Analysis limit: Processing all reviews in the file.")
 
-    analysis_results = analyze_review_sentiment_json_lines(
+    analysis_results = ollama_api_analyze_review_sentiment_json_lines(
         json_file,
         max_reviews=MAX_REVIEWS_TO_ANALYZE
     )
