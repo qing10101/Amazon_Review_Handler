@@ -67,8 +67,8 @@ def ollama_analyze(review_text:str):
     response = ask_ollama(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
     if polarity is None:
-        logging.error("None Rating Can Be Extracted from LLM Response!\nQuitting....")
-        return None
+        logging.warning(f"None Rating Can Be Extracted from LLM Response {review_text}!\nQuitting....")
+        return 2
     if polarity < -1:
         polarity = -1
     elif polarity > 1:
@@ -80,8 +80,8 @@ def gemini_analyze(review_text:str):
     response = ask_gemini(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
     if polarity is None:
-        logging.error("None Rating Can Be Extracted from LLM Response!\nQuitting....")
-        return None
+        logging.warning(f"None Rating Can Be Extracted from LLM Response {review_text}!\nQuitting....")
+        return 2
     if polarity < -1:
         polarity = -1
     elif polarity > 1:
@@ -169,8 +169,8 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
                         review['sentiment_label'] = sentiment
                         analyzed_reviews.append(review)
 
-                        print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
-                        analyzed_reviews)}/{num_to_select})...")
+                        # print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
+                        # analyzed_reviews)}/{num_to_select})...")
 
                         # Optional: Stop early if we've found all our random reviews
                         if len(analyzed_reviews) >= num_to_select:
@@ -457,6 +457,7 @@ if __name__ == "__main__":
         print("[PHASE 3 COMPLETE]")
 
         print("\n[FINAL STEP: DISPLAYING PLOTS]")
+        print("ALL REVIEWS OUTSIDE OF [-1, 1] RANGE MUST BE DISCARDED!!!\n")
         print("Close the plot windows to exit the program.")
         print("=" * 60)
 
