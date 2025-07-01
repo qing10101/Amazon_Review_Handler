@@ -19,8 +19,8 @@ from textblob import TextBlob
 import sys
 import pandas as pd  # Added for advanced data manipulation
 import numpy as np  # Added for numerical operations (e.g., jitter)
-from gemini_llm_handler import ask_gemini
-from ollama_llm_handler import ask_ollama
+from gemini_llm_handler import ask_gemini_async as ask_gemini
+from ollama_llm_handler import ask_ollama_async as ask_ollama
 
 
 def parse_first_number_from_llm_response(text: str):
