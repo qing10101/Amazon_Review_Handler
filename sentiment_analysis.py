@@ -223,9 +223,9 @@ def print_analysis_summary(analyzed_reviews):
     print("-" * 30)
     print(f"Average Sentiment Polarity: {average_polarity:.4f}")
 
-    if average_polarity > 0.1:
+    if average_polarity > 0.05:
         print("Overall sentiment of the sample is Positive.")
-    elif average_polarity < -0.1:
+    elif average_polarity < -0.05:
         print("Overall sentiment of the sample is Negative.")
     else:
         print("Overall sentiment of the sample is Neutral.")
