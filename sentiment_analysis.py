@@ -149,8 +149,8 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
                         review['sentiment_label'] = sentiment
                         analyzed_reviews.append(review)
 
-                        # print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
-                        # analyzed_reviews)}/{num_to_select})...")
+                        print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
+                        analyzed_reviews)}/{num_to_select})...")
 
                         # Optional: Stop early if we've found all our random reviews
                         if len(analyzed_reviews) >= num_to_select:
@@ -382,8 +382,15 @@ if __name__ == "__main__":
     # ======================================================================
     #                          CONFIGURATION
     # ======================================================================
-    MAX_REVIEWS_TO_ANALYZE = int(input("Enter number of entries for processing.\nEnter zero or negative for processing"
+    MAX_REVIEWS_TO_ANALYZE = int(input("SENTIMENT ANALYSIS\n"
+                                       "Enter number of entries for processing.\nEnter zero or negative for processing"
                                        "entire file: "))
+    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tGemini (2)\n\tTextblob (3)\n"))
+    ANALYSIS_FUNCTION = ollama_analyze
+    if ANALYSIS_FUNCTION_OPTIONS == 2:
+        ANALYSIS_FUNCTION = gemini_analyze
+    if ANALYSIS_FUNCTION_OPTIONS == 3:
+        ANALYSIS_FUNCTION = text_blob_analyze
     # ======================================================================
 
     print("=" * 60)
@@ -401,7 +408,7 @@ if __name__ == "__main__":
     analysis_results = analyze_review_sentiment_json_lines(
         json_file,
         MAX_REVIEWS_TO_ANALYZE,
-        ollama_analyze
+        ANALYSIS_FUNCTION
     )
 
     if analysis_results:
