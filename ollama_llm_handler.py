@@ -1,53 +1,57 @@
-import requests
+import httpx  # The async-capable replacement for 'requests'
 import json
+import asyncio
+from typing import AsyncGenerator, Optional, Dict, Any
 
 # Define the Ollama API endpoint
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 
 
-def ask_ollama(prompt: str, model: str = "llama3.1:8b"):
+# --- ASYNCHRONOUS FUNCTIONS ---
+
+async def ask_ollama_async(prompt: str, model: str = "llama3.1:8b") -> Optional[Dict[str, Any]]:
     """
-    Sends a prompt to the Ollama API and gets the full response at once.
+    Asynchronously sends a prompt to the Ollama API and gets the full response.
 
     Args:
         prompt: The input text to send to the model.
-        model: The name of the Ollama model to use (e.g., 'llama3', 'mistral').
+        model: The name of the Ollama model to use.
 
     Returns:
-        The generated response text as a string, or None if an error occurs.
+        The full JSON response dictionary from Ollama, or None if an error occurs.
+        Note: The previous optimizer script expects the full dictionary.
     """
-    # print(f"--- Sending prompt to model: {model} (non-streaming) ---")
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False
+    }
+
     try:
-        # The payload to send to the API
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False  # We want the full response at once
-        }
+        # httpx.AsyncClient is the async equivalent of a requests.Session
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # 'await' pauses this function until the network request is complete
+            response = await client.post(OLLAMA_ENDPOINT, json=payload)
 
-        # Send the POST request
-        response = requests.post(OLLAMA_ENDPOINT, json=payload)
+            # Check for HTTP errors (e.g., 404, 500)
+            response.raise_for_status()
 
-        # Raise an exception if the request was unsuccessful
-        response.raise_for_status()
+            # .json() is also an awaitable coroutine
+            return await response.json()
 
-        # Parse the JSON response and return the 'response' field
-        response_data = response.json()
-        return response_data.get("response")
-
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         print(f"Error: Could not connect to Ollama API at {OLLAMA_ENDPOINT}.")
         print(f"Details: {e}")
-        print("Please make sure Ollama is running.")
+        print("Please make sure Ollama is running and the model is available.")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred during the async Ollama request: {e}")
         return None
 
 
-def ask_ollama_stream_response(prompt: str, model: str = "llama3.1:8b"):
+async def ask_ollama_stream_async(prompt: str, model: str = "llama3.1:8b") -> AsyncGenerator[str, None]:
     """
-    Sends a prompt and streams the response token by token.
+    Asynchronously sends a prompt and streams the response token by token.
 
     Args:
         prompt: The input text to send to the model.
@@ -56,34 +60,29 @@ def ask_ollama_stream_response(prompt: str, model: str = "llama3.1:8b"):
     Yields:
         Each chunk of the response text as it is generated.
     """
-    print(f"\n--- Sending prompt to model: {model} (streaming) ---")
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": True
+    }
+
     try:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": True  # Enable streaming
-        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # client.stream() opens a connection without waiting for the full response
+            async with client.stream("POST", OLLAMA_ENDPOINT, json=payload) as response:
+                response.raise_for_status()
 
-        # The 'stream=True' argument in requests.post is crucial for streaming
-        with requests.post(OLLAMA_ENDPOINT, json=payload, stream=True) as response:
-            response.raise_for_status()
+                # 'async for' iterates over the response as chunks arrive
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        yield chunk.get("response", "")
+                        if chunk.get("done"):
+                            break
 
-            # Iterate over the response line by line
-            for line in response.iter_lines():
-                if line:
-                    # Each line is a JSON object; decode and parse it
-                    chunk = json.loads(line.decode('utf-8'))
-
-                    # Yield the 'response' part of the chunk
-                    yield chunk.get("response", "")
-
-                    # The final chunk in a stream has a 'done' key
-                    if chunk.get("done"):
-                        break
-
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         print(f"Error: Could not connect to Ollama API at {OLLAMA_ENDPOINT}.")
         print(f"Details: {e}")
-        print("Please make sure Ollama is running.")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred during the async Ollama stream: {e}")
+

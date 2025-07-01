@@ -13,3 +13,5 @@ beautifulsoup4~=4.13.4
 selenium~=4.33.0
 google~=3.0.0
 requests~=2.32.3
+aiofiles~=24.1.0
+httpx~=0.28.1
