@@ -135,9 +135,9 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
 
                         polarity = analyze_function(combined_text)
 
-                        if polarity > 0.05:
+                        if polarity > 0.1:
                             sentiment = "Positive"
-                        elif polarity < -0.05:
+                        elif polarity < -0.1:
                             sentiment = "Negative"
                         else:
                             sentiment = "Neutral"
@@ -169,9 +169,9 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
                     response = ask_ollama(llm_prompt_constructor(combined_text))
                     polarity = parse_first_number_from_llm_response(response)
 
-                    if polarity > 0.05:
+                    if polarity > 0.1:
                         sentiment = "Positive"
-                    elif polarity < -0.05:
+                    elif polarity < -0.1:
                         sentiment = "Negative"
                     else:
                         sentiment = "Neutral"
@@ -223,9 +223,9 @@ def print_analysis_summary(analyzed_reviews):
     print("-" * 30)
     print(f"Average Sentiment Polarity: {average_polarity:.4f}")
 
-    if average_polarity > 0.05:
+    if average_polarity > 0.1:
         print("Overall sentiment of the sample is Positive.")
-    elif average_polarity < -0.05:
+    elif average_polarity < -0.1:
         print("Overall sentiment of the sample is Negative.")
     else:
         print("Overall sentiment of the sample is Neutral.")
