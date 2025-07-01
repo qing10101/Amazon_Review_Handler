@@ -5,7 +5,7 @@ import json
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 
 
-def ask_ollama(prompt: str, model: str = "llama3.1:8b"):
+def ask_ollama(prompt: str, model: str = "gemma3:1b"):
     """
     Sends a prompt to the Ollama API and gets the full response at once.
 
@@ -45,7 +45,7 @@ def ask_ollama(prompt: str, model: str = "llama3.1:8b"):
         return None
 
 
-def ask_ollama_stream_response(prompt: str, model: str = "llama3.1:8b"):
+def ask_ollama_stream_response(prompt: str, model: str = "gemma3:1b"):
     """
     Sends a prompt and streams the response token by token.
 

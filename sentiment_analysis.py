@@ -8,8 +8,10 @@
 # It includes a configurable limit for processing large files.
 #
 # ==============================================================================
-import random
+import logging
 # --- 1. IMPORT LIBRARIES ---
+import time
+import random
 import re
 import json
 import matplotlib.pyplot as plt
@@ -64,18 +66,36 @@ def llm_prompt_constructor(review_text:str):
 def ollama_analyze(review_text:str):
     response = ask_ollama(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
+    if polarity is None:
+        logging.error("None Rating Can Be Extracted from LLM Response!\nQuitting....")
+        return None
+    if polarity < -1:
+        polarity = -1
+    elif polarity > 1:
+        polarity = 1
     return polarity
 
 
 def gemini_analyze(review_text:str):
     response = ask_gemini(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
+    if polarity is None:
+        logging.error("None Rating Can Be Extracted from LLM Response!\nQuitting....")
+        return None
+    if polarity < -1:
+        polarity = -1
+    elif polarity > 1:
+        polarity = 1
     return polarity
 
 
 def text_blob_analyze(review_text:str):
     blob = TextBlob(review_text)
     polarity = blob.sentiment.polarity
+    if polarity < -1:
+        polarity = -1
+    elif polarity > 1:
+        polarity = 1
     return polarity
 
 
@@ -393,6 +413,8 @@ if __name__ == "__main__":
         ANALYSIS_FUNCTION = text_blob_analyze
     # ======================================================================
 
+    start_time = time.time()
+
     print("=" * 60)
     print("      ENHANCED SENTIMENT ANALYSIS PROGRAM INITIALIZED")
     print("=" * 60)
@@ -410,6 +432,13 @@ if __name__ == "__main__":
         MAX_REVIEWS_TO_ANALYZE,
         ANALYSIS_FUNCTION
     )
+
+    end_time = time.time()
+    duration = end_time - start_time
+    print("\n")
+    print("=" * 60)
+    print(f"\nAnalysis Finished In {duration} seconds.\n")
+    print("=" * 60)
 
     if analysis_results:
         print_analysis_summary(analysis_results)
@@ -436,3 +465,4 @@ if __name__ == "__main__":
     else:
         print("\n--- Analysis failed or was halted. No results to show. ---")
         print("=" * 60)
+
