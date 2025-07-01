@@ -8,7 +8,7 @@
 # It includes a configurable limit for processing large files.
 #
 # ==============================================================================
-import random
+
 # --- 1. IMPORT LIBRARIES ---
 import re
 import json
@@ -19,8 +19,8 @@ from textblob import TextBlob
 import sys
 import pandas as pd  # Added for advanced data manipulation
 import numpy as np  # Added for numerical operations (e.g., jitter)
-from gemini_llm_handler import ask_gemini_async as ask_gemini
-from ollama_llm_handler import ask_ollama_async as ask_ollama
+from gemini_llm_handler import ask_gemini
+from ollama_llm_handler import ask_ollama
 
 
 def parse_first_number_from_llm_response(text: str):
@@ -61,26 +61,8 @@ def llm_prompt_constructor(review_text:str):
     return prompt
 
 
-def ollama_analyze(review_text:str):
-    response = ask_ollama(llm_prompt_constructor(review_text))
-    polarity = parse_first_number_from_llm_response(response)
-    return polarity
-
-
-def gemini_analyze(review_text:str):
-    response = ask_gemini(llm_prompt_constructor(review_text))
-    polarity = parse_first_number_from_llm_response(response)
-    return polarity
-
-
-def text_blob_analyze(review_text:str):
-    blob = TextBlob(review_text)
-    polarity = blob.sentiment.polarity
-    return polarity
-
-
 # --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
-def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze):
+def ollama_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
     """
     Loads and analyzes reviews from a JSON Lines file, stopping after
     'max_reviews' have been processed.
@@ -90,8 +72,6 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
         max_reviews (int, optional): The maximum number of reviews to analyze.
                                      If None, the entire file is processed.
                                      Defaults to None.
-        analyze_function (function, optional):  function for performing sentiment analysis.
-                                                Defaults to text_blob_analysis
     Returns:
         list: A list of review dictionaries with added sentiment data.
     """
@@ -100,88 +80,154 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
     print("-" * 30)
 
     try:
-        if max_reviews is not None:
-            print(f"Attempting to select {max_reviews} random reviews from the file...")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
+                    print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
+                    break
 
-            # --- Pass 1: Count total lines/reviews in the file ---
-            with open(file_path, 'r', encoding='utf-8') as f:
-                total_reviews = sum(1 for line in f if line.strip())  # Count non-empty lines
+                if not line.strip():
+                    continue
 
-            print(f"Found {total_reviews} total reviews in the file.")
+                review = json.loads(line)
+                combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
 
-            # Ensure we don't ask for more reviews than available
-            num_to_select = min(max_reviews, total_reviews)
-            if num_to_select < max_reviews:
-                print(
-                    f"---> Warning: Requested {max_reviews} reviews, but only {total_reviews} are available. Will process {num_to_select}.")
+                response = ask_ollama(llm_prompt_constructor(combined_text))
+                polarity = parse_first_number_from_llm_response(response)
 
-            # --- Select N unique random line indices ---
-            # We use range(total_reviews) to get indices from 0 to total_reviews-1
-            selected_indices = set(random.sample(range(total_reviews), num_to_select))
+                if polarity > 0.05:
+                    sentiment = "Positive"
+                elif polarity < -0.05:
+                    sentiment = "Negative"
+                else:
+                    sentiment = "Neutral"
 
-            # --- Pass 2: Read the file again and process only the selected lines ---
-            print(f"Processing {len(selected_indices)} randomly selected reviews...")
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
 
-            current_line_index = -1  # Start at -1 to handle non-empty line counting correctly
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue  # Skip empty lines, don't increment counter
+                review['sentiment_polarity'] = polarity
+                review['sentiment_label'] = sentiment
+                analyzed_reviews.append(review)
 
-                    current_line_index += 1
-                    if current_line_index in selected_indices:
-                        review = json.loads(line)
-                        combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+    except FileNotFoundError:
+        print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting analysis.")
+        print(f"        Details: {e}")
+        return None
 
-                        polarity = analyze_function(combined_text)
+    print("-" * 30)
+    print("[PHASE 1 COMPLETE]")
+    return analyzed_reviews
 
-                        if polarity > 0.1:
-                            sentiment = "Positive"
-                        elif polarity < -0.1:
-                            sentiment = "Negative"
-                        else:
-                            sentiment = "Neutral"
 
-                        # print(f"  -> Processing Review #{i + 1}...")
-                        # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+def gemini_api_analyze_review_sentiment_json_lines(file_path, max_reviews=None):
+    """
+    Loads and analyzes reviews from a JSON Lines file, stopping after
+    'max_reviews' have been processed.
 
-                        review['sentiment_polarity'] = polarity
-                        review['sentiment_label'] = sentiment
-                        analyzed_reviews.append(review)
+    Args:
+        file_path (str): The path to the file.
+        max_reviews (int, optional): The maximum number of reviews to analyze.
+                                     If None, the entire file is processed.
+                                     Defaults to None.
+    Returns:
+        list: A list of review dictionaries with added sentiment data.
+    """
+    analyzed_reviews = []
+    print("\n[PHASE 1: ANALYZING REVIEWS]")
+    print("-" * 30)
 
-                        # print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
-                        # analyzed_reviews)}/{num_to_select})...")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
+                    print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
+                    break
 
-                        # Optional: Stop early if we've found all our random reviews
-                        if len(analyzed_reviews) >= num_to_select:
-                            print("\n---> Finished processing all selected random reviews.")
-                            break
-        else:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for i, line in enumerate(f):
+                if not line.strip():
+                    continue
 
-                    if not line.strip():
-                        continue
+                review = json.loads(line)
+                combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
 
-                    review = json.loads(line)
-                    combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+                response = ask_gemini(llm_prompt_constructor(combined_text))
+                polarity = parse_first_number_from_llm_response(response)
 
-                    response = ask_ollama(llm_prompt_constructor(combined_text))
-                    polarity = parse_first_number_from_llm_response(response)
+                if polarity > 0.05:
+                    sentiment = "Positive"
+                elif polarity < -0.05:
+                    sentiment = "Negative"
+                else:
+                    sentiment = "Neutral"
 
-                    if polarity > 0.1:
-                        sentiment = "Positive"
-                    elif polarity < -0.1:
-                        sentiment = "Negative"
-                    else:
-                        sentiment = "Neutral"
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
 
-                    # print(f"  -> Processing Review #{i + 1}...")
-                    # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+                review['sentiment_polarity'] = polarity
+                review['sentiment_label'] = sentiment
+                analyzed_reviews.append(review)
 
-                    review['sentiment_polarity'] = polarity
-                    review['sentiment_label'] = sentiment
-                    analyzed_reviews.append(review)
+    except FileNotFoundError:
+        print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting analysis.")
+        print(f"        Details: {e}")
+        return None
+
+    print("-" * 30)
+    print("[PHASE 1 COMPLETE]")
+    return analyzed_reviews
+
+
+def analyze_review_sentiment_json_lines(file_path, max_reviews=None):
+    """
+    Loads and analyzes reviews from a JSON Lines file, stopping after
+    'max_reviews' have been processed.
+
+    Args:
+        file_path (str): The path to the file.
+        max_reviews (int, optional): The maximum number of reviews to analyze.
+                                     If None, the entire file is processed.
+                                     Defaults to None.
+    Returns:
+        list: A list of review dictionaries with added sentiment data.
+    """
+    analyzed_reviews = []
+    print("\n[PHASE 1: ANALYZING REVIEWS]")
+    print("-" * 30)
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if max_reviews is not None and len(analyzed_reviews) >= max_reviews:
+                    print(f"\n---> Reached the analysis limit of {max_reviews} reviews. Stopping file read.")
+                    break
+
+                if not line.strip():
+                    continue
+
+                review = json.loads(line)
+                combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+
+                blob = TextBlob(combined_text)
+                polarity = blob.sentiment.polarity
+
+                if polarity > 0.05:
+                    sentiment = "Positive"
+                elif polarity < -0.05:
+                    sentiment = "Negative"
+                else:
+                    sentiment = "Neutral"
+
+                # print(f"  -> Processing Review #{i + 1}...")
+                # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
+
+                review['sentiment_polarity'] = polarity
+                review['sentiment_label'] = sentiment
+                analyzed_reviews.append(review)
 
     except FileNotFoundError:
         print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
@@ -197,6 +243,7 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
 
 
 # --- 3. DEFINE THE SUMMARY FUNCTION (Unchanged) ---
+
 def print_analysis_summary(analyzed_reviews):
     """Prints a detailed summary of the analysis results to the terminal."""
     print("\n[PHASE 2: ANALYSIS SUMMARY]")
@@ -383,7 +430,7 @@ if __name__ == "__main__":
     #                          CONFIGURATION
     # ======================================================================
     MAX_REVIEWS_TO_ANALYZE = int(input("Enter number of entries for processing.\nEnter zero or negative for processing"
-                                       "entire file: "))
+                                       "entire file:"))
     # ======================================================================
 
     print("=" * 60)
@@ -398,10 +445,9 @@ if __name__ == "__main__":
     else:
         print("Analysis limit: Processing all reviews in the file.")
 
-    analysis_results = analyze_review_sentiment_json_lines(
+    analysis_results = ollama_api_analyze_review_sentiment_json_lines(
         json_file,
-        MAX_REVIEWS_TO_ANALYZE,
-        ollama_analyze
+        max_reviews=MAX_REVIEWS_TO_ANALYZE
     )
 
     if analysis_results:
