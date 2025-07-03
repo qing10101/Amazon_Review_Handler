@@ -470,6 +470,7 @@ if __name__ == "__main__":
         print(f"Analysis limit: Processing a maximum of {MAX_REVIEWS_TO_ANALYZE} reviews.")
     else:
         print("Analysis limit: Processing all reviews in the file.")
+        MAX_REVIEWS_TO_ANALYZE = None
 
     analysis_results = analyze_review_sentiment_json_lines(
         json_file,
