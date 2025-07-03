@@ -447,14 +447,18 @@ if __name__ == "__main__":
     print("IF YOU USE OLLAMA,\nMAKE SURE YOUR OLLAMA MODEL IS INSTALLED AND RUNNING\n")
     ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tTextblob (2)\n\t"
                                           "Vander (3)\n\tTransformer (4)\n"))
-    ANALYSIS_FUNCTION = ollama_analyze
-    if ANALYSIS_FUNCTION_OPTIONS == 2:
+    ANALYSIS_FUNCTION = None
+    if ANALYSIS_FUNCTION_OPTIONS == 1:
+        ANALYSIS_FUNCTION = ollama_analyze
+    elif ANALYSIS_FUNCTION_OPTIONS == 2:
         ANALYSIS_FUNCTION = text_blob_analyze
     elif ANALYSIS_FUNCTION_OPTIONS == 3:
         ANALYSIS_FUNCTION = vander_analyze
     elif ANALYSIS_FUNCTION_OPTIONS == 4:
         ANALYSIS_FUNCTION = transformer_analyze
         model_pipeline = sentiment_pipeline
+
+    print(f"Using {ANALYSIS_FUNCTION} for analysis...")
     # ======================================================================
 
     start_time = time.time()
