@@ -448,7 +448,7 @@ if __name__ == "__main__":
                                        "entire file: "))
     print("IF YOU USE OLLAMA,\nMAKE SURE YOUR OLLAMA MODEL IS INSTALLED AND RUNNING\n")
     ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tTextblob (2)\n\t"
-                                          "Vander (3)\n\tTransformer (4)\n"))
+                                          "Vader (3)\n\tTransformer (4)\n"))
     ANALYSIS_FUNCTION = None
     if ANALYSIS_FUNCTION_OPTIONS == 1:
         ANALYSIS_FUNCTION = ollama_analyze
