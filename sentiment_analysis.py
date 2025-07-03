@@ -213,8 +213,10 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
                     review = json.loads(line)
                     combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
 
-                    response = ask_ollama(llm_prompt_constructor(combined_text))
-                    polarity = parse_first_number_from_llm_response(response)
+                    if model_pipeline is None:
+                        polarity = analyze_function(combined_text)
+                    else:
+                        polarity = analyze_function(combined_text, model_pipeline)
 
                     if polarity > 0.05:
                         sentiment = "Positive"
