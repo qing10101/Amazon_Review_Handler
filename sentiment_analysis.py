@@ -21,7 +21,6 @@ from textblob import TextBlob
 import sys
 import pandas as pd  # Added for advanced data manipulation
 import numpy as np  # Added for numerical operations (e.g., jitter)
-from gemini_llm_handler import ask_gemini
 from ollama_llm_handler import ask_ollama
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -71,19 +70,6 @@ def ollama_analyze(review_text:str):
     polarity = parse_first_number_from_llm_response(response)
     if polarity is None:
         logging.warning(f"None Rating Can Be Extracted from LLM Response {review_text}!\nQuitting....")
-        return 2
-    if polarity < -1:
-        polarity = -1
-    elif polarity > 1:
-        polarity = 1
-    return polarity
-
-
-def gemini_analyze(review_text:str):
-    response = ask_gemini(llm_prompt_constructor(review_text))
-    polarity = parse_first_number_from_llm_response(response)
-    if polarity is None:
-        logging.warning(f"None Rating Can Be Extracted from LLM Response: {response}!\nSkipping....")
         return 2
     if polarity < -1:
         polarity = -1
@@ -459,16 +445,14 @@ if __name__ == "__main__":
                                        "Enter number of entries for processing.\nEnter zero or negative for processing"
                                        "entire file: "))
     print("IF YOU USE OLLAMA,\nMAKE SURE YOUR OLLAMA MODEL IS INSTALLED AND RUNNING\n")
-    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tGemini (2)\n\tTextblob (3)\n\t"
-                                          "Vander (4)\n\tTransformer (5)\n"))
+    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tTextblob (2)\n\t"
+                                          "Vander (3)\n\tTransformer (4)\n"))
     ANALYSIS_FUNCTION = ollama_analyze
     if ANALYSIS_FUNCTION_OPTIONS == 2:
-        ANALYSIS_FUNCTION = gemini_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 3:
         ANALYSIS_FUNCTION = text_blob_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 4:
+    elif ANALYSIS_FUNCTION_OPTIONS == 3:
         ANALYSIS_FUNCTION = vander_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 5:
+    elif ANALYSIS_FUNCTION_OPTIONS == 4:
         ANALYSIS_FUNCTION = transformer_analyze
         model_pipeline = sentiment_pipeline
     # ======================================================================
