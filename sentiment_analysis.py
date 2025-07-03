@@ -24,6 +24,9 @@ import numpy as np  # Added for numerical operations (e.g., jitter)
 from gemini_llm_handler import ask_gemini
 from ollama_llm_handler import ask_ollama
 
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import pipeline
+
 
 def parse_first_number_from_llm_response(text: str):
     """
@@ -80,7 +83,7 @@ def gemini_analyze(review_text:str):
     response = ask_gemini(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
     if polarity is None:
-        logging.warning(f"None Rating Can Be Extracted from LLM Response {review_text}!\nQuitting....")
+        logging.warning(f"None Rating Can Be Extracted from LLM Response: {response}!\nSkipping....")
         return 2
     if polarity < -1:
         polarity = -1
@@ -99,8 +102,43 @@ def text_blob_analyze(review_text:str):
     return polarity
 
 
+def vander_analyze(review_text:str):
+    sentiment = analyzer.polarity_scores(review_text)
+    polarity = sentiment['compound']
+    if polarity < -1:
+        polarity = -1
+    elif polarity > 1:
+        polarity = 1
+    return polarity
+
+
+def transformer_analyze(review_text: str, model_pipeline):
+    """
+    Analyzes a single review text using the transformer pipeline and returns
+    a polarity score (-1 for Negative, 0 for Neutral, 1 for Positive).
+    """
+    # The pipeline returns a list with one dictionary, e.g., [{'label': 'Positive', 'score': 0.99}]
+    results = model_pipeline(review_text)
+
+    # Get the label and the confidence score
+    label = results[0]['label']
+    score = results[0]['score']
+    if score > 1:
+        score = 1
+    # --- THIS IS THE CORRECTED LOGIC ---
+    # Assign polarity based on the TEXT LABEL, not the confidence score.
+    if label == 'positive':
+        # Return the confidence score as a positive value
+        return score
+    elif label == 'negative':
+        # Return the confidence score as a negative value
+        return -score
+    else:  # 'Neutral'
+        return 0.0
+
+
 # --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
-def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze):
+def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze, model_pipeline=None):
     """
     Loads and analyzes reviews from a JSON Lines file, stopping after
     'max_reviews' have been processed.
@@ -153,7 +191,10 @@ def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_fun
                         review = json.loads(line)
                         combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
 
-                        polarity = analyze_function(combined_text)
+                        if model_pipeline is None:
+                            polarity = analyze_function(combined_text)
+                        else:
+                            polarity = analyze_function(combined_text,model_pipeline)
 
                         if polarity > 0.05:
                             sentiment = "Positive"
@@ -397,20 +438,39 @@ def plot_rating_vs_sentiment(analyzed_reviews):
 
 
 # --- 5. SCRIPT EXECUTION BLOCK ---
-
 if __name__ == "__main__":
+
+    print("INITIALIZING REQUIRED MODELS...")
+    model_pipeline = None
+    analyzer = SentimentIntensityAnalyzer()
+
+    sentiment_pipeline = pipeline(
+        "sentiment-analysis",
+        model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+        tokenizer="cardiffnlp/twitter-roberta-base-sentiment-latest",
+        max_length=512,
+        truncation=True
+    )
+    print("REQUIRED MODELS LOADED...")
     # ======================================================================
     #                          CONFIGURATION
     # ======================================================================
     MAX_REVIEWS_TO_ANALYZE = int(input("SENTIMENT ANALYSIS\n"
                                        "Enter number of entries for processing.\nEnter zero or negative for processing"
                                        "entire file: "))
-    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tGemini (2)\n\tTextblob (3)\n"))
+    print("IF YOU USE OLLAMA,\nMAKE SURE YOUR OLLAMA MODEL IS INSTALLED AND RUNNING\n")
+    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tGemini (2)\n\tTextblob (3)\n\t"
+                                          "Vander (4)\n\tTransformer (5)\n"))
     ANALYSIS_FUNCTION = ollama_analyze
     if ANALYSIS_FUNCTION_OPTIONS == 2:
         ANALYSIS_FUNCTION = gemini_analyze
-    if ANALYSIS_FUNCTION_OPTIONS == 3:
+    elif ANALYSIS_FUNCTION_OPTIONS == 3:
         ANALYSIS_FUNCTION = text_blob_analyze
+    elif ANALYSIS_FUNCTION_OPTIONS == 4:
+        ANALYSIS_FUNCTION = vander_analyze
+    elif ANALYSIS_FUNCTION_OPTIONS == 5:
+        ANALYSIS_FUNCTION = transformer_analyze
+        model_pipeline = sentiment_pipeline
     # ======================================================================
 
     start_time = time.time()
@@ -430,7 +490,8 @@ if __name__ == "__main__":
     analysis_results = analyze_review_sentiment_json_lines(
         json_file,
         MAX_REVIEWS_TO_ANALYZE,
-        ANALYSIS_FUNCTION
+        ANALYSIS_FUNCTION,
+        model_pipeline
     )
 
     end_time = time.time()
