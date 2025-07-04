@@ -98,33 +98,110 @@ def vander_analyze(review_text:str):
     return polarity
 
 
-def transformer_analyze(review_text: str, model_pipeline):
+def pipeline_analyze_review_sentiment(file_path, max_reviews, pipeline):
     """
-    Analyzes a single review text using the transformer pipeline and returns
-    a polarity score (-1 for Negative, 0 for Neutral, 1 for Positive).
+    Loads reviews, performs batch sentiment analysis using a transformer pipeline,
+    and merges the results back into the original review data.
+
+    Args:
+        file_path (str): The path to the file.
+        max_reviews (int): The maximum number of reviews to analyze.
+        pipeline (object): The pre-loaded and configured Hugging Face pipeline.
+
+    Returns:
+        list: A list of the original review dictionaries, now with added
+              'sentiment_polarity' and 'sentiment_label' keys.
     """
-    # The pipeline returns a list with one dictionary, e.g., [{'label': 'Positive', 'score': 0.99}]
-    results = model_pipeline(review_text)
 
-    # Get the label and the confidence score
-    label = results[0]['label']
-    score = results[0]['score']
-    if score > 1:
-        score = 1
-    # --- THIS IS THE CORRECTED LOGIC ---
-    # Assign polarity based on the TEXT LABEL, not the confidence score.
-    if label == 'positive':
-        # Return the confidence score as a positive value
-        return score
-    elif label == 'negative':
-        # Return the confidence score as a negative value
-        return -score
-    else:  # 'Neutral'
-        return 0.0
+    # --- Stage 1: Collect Data for Analysis ---
+    # We need to keep both the original review dicts and the text for the pipeline.
+    original_reviews = []
+    texts_to_analyze = []
+
+    print("\n[PHASE 1: GATHERING REVIEWS FROM FILE]")
+    print("-" * 50)
+
+    try:
+        if max_reviews is not None and max_reviews > 0:
+            print(f"Attempting to select {max_reviews} random reviews...")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                total_reviews = sum(1 for line in f if line.strip())
+            print(f"Found {total_reviews} total reviews.")
+
+            num_to_select = min(max_reviews, total_reviews)
+            selected_indices = set(random.sample(range(total_reviews), num_to_select))
+
+            print(f"Collecting {len(selected_indices)} randomly selected reviews...")
+            current_line_index = -1
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip(): continue
+                    current_line_index += 1
+                    if current_line_index in selected_indices:
+                        review = json.loads(line)
+                        original_reviews.append(review)  # Keep the original dict
+                        texts_to_analyze.append(f"{review.get('title', '')}. {review.get('text', '')}")
+                        if len(original_reviews) >= num_to_select: break
+        else:
+            print("Collecting all reviews from the file...")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip(): continue
+                    review = json.loads(line)
+                    original_reviews.append(review)  # Keep the original dict
+                    texts_to_analyze.append(f"{review.get('title', '')}. {review.get('text', '')}")
+
+    except FileNotFoundError:
+        print(f"\n[ERROR] The file '{file_path}' was not found.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] An error occurred during file processing: {e}")
+        return None
+
+    if not original_reviews:
+        print("No reviews were collected to analyze.")
+        return []
+
+    print(f"Successfully collected {len(original_reviews)} reviews.")
+    print("-" * 50)
+
+    # --- Stage 2: Perform Batch Analysis ---
+    print(f"\n[PHASE 2: ANALYZING {len(texts_to_analyze)} TEXTS IN A BATCH]")
+    # The pipeline will process all texts at once for maximum efficiency.
+    # It returns a list of dictionaries: [{'label': ..., 'score': ...}, ...]
+    analysis_results = pipeline(texts_to_analyze)
+    print("Batch analysis complete.")
+    print("-" * 50)
+
+    # --- Stage 3: Merge Results (The Core Fix) ---
+    print("\n[PHASE 3: MERGING RESULTS WITH ORIGINAL DATA]")
+    # Loop through the original reviews and the analysis results simultaneously.
+    # zip() pairs them up: (review1, result1), (review2, result2), ...
+    for review, result in zip(original_reviews, analysis_results):
+        label = result['label'].lower().title()
+        score = result['score']
+
+        # Calculate polarity based on the label
+        if label == 'Negative':
+            polarity = -score
+        elif label == 'Positive':
+            polarity = score
+        else:  # 'Neutral'
+            polarity = 0.0
+
+        # Add the new sentiment data directly to the ORIGINAL review dictionary.
+        # This preserves the star rating and all other original data.
+        review['sentiment_polarity'] = polarity
+        review['sentiment_label'] = label
+
+    print("Merging complete. Data integrity maintained.")
+    print("-" * 50)
+
+    # Return the list of original review dictionaries, now enriched with sentiment data.
+    return original_reviews
 
 
-# --- 2. DEFINE THE CORE ANALYSIS FUNCTION (Unchanged) ---
-def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze, model_pipeline=None):
+def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze):
     """
     Loads and analyzes reviews from a JSON Lines file, stopping after
     'max_reviews' have been processed.
@@ -457,10 +534,15 @@ if __name__ == "__main__":
     elif ANALYSIS_FUNCTION_OPTIONS == 3:
         ANALYSIS_FUNCTION = vander_analyze
     elif ANALYSIS_FUNCTION_OPTIONS == 4:
-        ANALYSIS_FUNCTION = transformer_analyze
         model_pipeline = sentiment_pipeline
 
-    print(f"Using {ANALYSIS_FUNCTION} for analysis...")
+    if ANALYSIS_FUNCTION_OPTIONS < 1:
+        logging.error("No Valid Analysis Function Chosen! Quitting...")
+
+    if ANALYSIS_FUNCTION is not None:
+        print(f"Using {ANALYSIS_FUNCTION} for analysis...")
+    else:
+        print(f"Using {model_pipeline} pipeline for analysis...")
     # ======================================================================
 
     start_time = time.time()
@@ -478,12 +560,15 @@ if __name__ == "__main__":
         print("Analysis limit: Processing all reviews in the file.")
         MAX_REVIEWS_TO_ANALYZE = None
 
-    analysis_results = analyze_review_sentiment_json_lines(
-        json_file,
-        MAX_REVIEWS_TO_ANALYZE,
-        ANALYSIS_FUNCTION,
-        model_pipeline
-    )
+    analysis_results = None
+    if ANALYSIS_FUNCTION_OPTIONS < 4:
+        analysis_results = analyze_review_sentiment_json_lines(
+            json_file,
+            MAX_REVIEWS_TO_ANALYZE,
+            ANALYSIS_FUNCTION
+        )
+    else:
+        analysis_results = pipeline_analyze_review_sentiment(json_file,MAX_REVIEWS_TO_ANALYZE,model_pipeline)
 
     end_time = time.time()
     duration = end_time - start_time
@@ -500,7 +585,7 @@ if __name__ == "__main__":
         # New plots fulfilling the request
         plot_sentiment_density_curve(analysis_results)  # Spectrum/Density/Curve
         plot_rating_sentiment_heatmap(analysis_results)  # Heatmap
-        plot_sentiment_bubble_chart(analysis_results)  # Bubble
+        # plot_sentiment_bubble_chart(analysis_results)  # Bubble
         plot_avg_sentiment_by_rating_curve(analysis_results)  # Explicit Curve
 
         # Original plots
