@@ -1,15 +1,12 @@
 # ==============================================================================
-#      ENHANCED SENTIMENT ANALYSIS SCRIPT WITH ADVANCED VISUALIZATIONS
+#      PARALLELIZED & ENHANCED SENTIMENT ANALYSIS SCRIPT
 # ==============================================================================
 #
-# This script performs sentiment analysis on a JSON Lines file and generates
-# a variety of advanced visualizations, including density curves, heatmaps,
-# and bubble charts, in addition to standard bar and scatter plots.
-# It includes a configurable limit for processing large files.
+# This script performs sentiment analysis using multiple CPU cores for VADER/TextBlob
+# and efficient batching for Transformers to maximize performance.
 #
 # ==============================================================================
 import logging
-# --- 1. IMPORT LIBRARIES ---
 import time
 import random
 import re
@@ -17,19 +14,53 @@ import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
+
+import torch
 from textblob import TextBlob
 import sys
-import pandas as pd  # Added for advanced data manipulation
-import numpy as np  # Added for numerical operations (e.g., jitter)
+import pandas as pd
+import numpy as np
 from ollama_llm_handler import ask_ollama
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from transformers import pipeline
+import multiprocessing
+import os
+from functools import partial
+
+# --- 1. MODEL/ANALYZER INITIALIZATION (Global for Workers) ---
+# These are initialized once and inherited by the worker processes
+print("INITIALIZING REQUIRED MODELS...")
+vader_analyzer = SentimentIntensityAnalyzer()
+
+# NOTE: The transformer pipeline will now be initialized within the worker
+# processes for multi-GPU safety. We define its configuration here.
+TRANSFORMER_MODEL_NAME = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+
+print("REQUIRED MODELS LOADED...")
 
 
+# --- 2. HARDWARE DETECTION ---
+def detect_hardware():
+    """Detects available hardware and returns a descriptive dictionary."""
+    if torch.cuda.is_available():
+        count = torch.cuda.device_count()
+        print(f"✅ Found {count} NVIDIA CUDA GPU(s).")
+        return {"type": "cuda", "count": count}
+    elif torch.backends.mps.is_available():
+        print("✅ Found Apple Silicon (MPS) GPU.")
+        return {"type": "mps", "count": 1}
+    else:
+        count = os.cpu_count()
+        print(f"⚠️ No supported GPU found. Falling back to {count} CPU cores.")
+        return {"type": "cpu", "count": count}
+
+
+# --- 3. SENTIMENT ANALYSIS FUNCTIONS ---
 def parse_first_number_from_llm_response(text: str):
     """
     Parses the first number (integer or float, positive or negative) from a string.
 
+    Generated code
     Args:
         text: The input string to search for a number.
 
@@ -57,271 +88,230 @@ def parse_first_number_from_llm_response(text: str):
     return None
 
 
-def llm_prompt_constructor(review_text:str):
+def llm_prompt_constructor(review_text: str):
     prompt = (f"You are asked to perform sentiment analysis for a user review.\nThe review is: {review_text}\n"
               f"Respond with a sentiment score with two digits after decimal that is between -1 (extreme negative) and "
               f"1 (extreme positive)")
     return prompt
 
 
-def ollama_analyze(review_text:str):
+def ollama_analyze(review_text: str):
     response = ask_ollama(llm_prompt_constructor(review_text))
     polarity = parse_first_number_from_llm_response(response)
-    if polarity is None:
-        logging.warning(f"None Rating Can Be Extracted from LLM Response {review_text}!\nQuitting....")
-        return 2
-    if polarity < -1:
-        polarity = -1
-    elif polarity > 1:
-        polarity = 1
-    return polarity
+    if polarity is None: return 0.0
+    return max(-1.0, min(1.0, polarity))
 
 
-def text_blob_analyze(review_text:str):
-    blob = TextBlob(review_text)
-    polarity = blob.sentiment.polarity
-    if polarity < -1:
-        polarity = -1
-    elif polarity > 1:
-        polarity = 1
-    return polarity
+def textblob_analyze(review_text: str):
+    polarity = TextBlob(review_text).sentiment.polarity
+    return max(-1.0, min(1.0, polarity))
 
 
-def vander_analyze(review_text:str):
-    sentiment = analyzer.polarity_scores(review_text)
-    polarity = sentiment['compound']
-    if polarity < -1:
-        polarity = -1
-    elif polarity > 1:
-        polarity = 1
-    return polarity
+def vader_analyze(review_text: str):
+    polarity = vader_analyzer.polarity_scores(review_text)['compound']
+    return max(-1.0, min(1.0, polarity))
 
 
-def pipeline_analyze_review_sentiment(file_path, max_reviews, pipeline):
+def transformer_gpu_worker(texts_chunk, gpu_id, batch_size):
+    """A dedicated worker for a single NVIDIA GPU."""
+    print(f"[GPU Worker {gpu_id}] Process started on CUDA device {gpu_id}...")
+    pipe = pipeline(
+        "sentiment-analysis", model=TRANSFORMER_MODEL_NAME, device=f"cuda:{gpu_id}",
+        torch_dtype=torch.float16 # Use half-precision for huge speedup on supported GPUs
+    )
+    print(f"[GPU Worker {gpu_id}] Pipeline loaded. Analyzing {len(texts_chunk)} texts with batch size {batch_size}...")
+    # --- THE FIX IS HERE ---
+    results = pipe(
+        texts_chunk,
+        batch_size=batch_size,
+        truncation=True,
+        max_length=512  # Add this crucial argument
+    )
+    polarities = []
+    for r in results:
+        s = r['score']
+        polarities.append(-s if r['label'].lower() == 'negative' else (s if r['label'].lower() == 'positive' else 0.0))
+    print(f"[GPU Worker {gpu_id}] Analysis complete.")
+    return polarities
+
+
+def transformer_cpu_worker(texts_chunk):
+    """A dedicated worker for a chunk of data on the CPU."""
+    print(f"[CPU Worker {os.getpid()}] Process started...")
+    # NOTE: No batch_size passed to pipeline, but specified in the call to pipe()
+    pipe = pipeline("sentiment-analysis", model=TRANSFORMER_MODEL_NAME, device="cpu")
+    print(f"[CPU Worker {os.getpid()}] Pipeline loaded. Analyzing {len(texts_chunk)} texts...")
+    # Use a smaller batch size for CPU as large batches can be less efficient
+    # --- THE FIX IS HERE ---
+    results = pipe(
+        texts_chunk,
+        batch_size=16,  # A smaller batch size is often better for CPU
+        truncation=True,
+        max_length=512  # Add this crucial argument
+    )
+    polarities = []
+    for r in results:
+        s = r['score']
+        polarities.append(-s if r['label'].lower() == 'negative' else (s if r['label'].lower() == 'positive' else 0.0))
+    print(f"[CPU Worker {os.getpid()}] Analysis complete.")
+    return polarities
+
+
+# Placeholder for menu mapping
+def transformer_analyze_placeholder(): pass
+
+
+# --- 4. CORE DATA HANDLING & ANALYSIS ORCHESTRATION ---
+def reservoir_sample_from_file(file_path, k):
     """
-    Loads reviews, performs batch sentiment analysis using a transformer pipeline,
-    and merges the results back into the original review data.
+    Selects k random items from a file using Reservoir Sampling.
+
+    This is memory-efficient as it only keeps k items in memory at a time,
+    making it ideal for files larger than available RAM.
 
     Args:
-        file_path (str): The path to the file.
-        max_reviews (int): The maximum number of reviews to analyze.
-        pipeline (object): The pre-loaded and configured Hugging Face pipeline.
+        file_path (str): The path to the JSON Lines file.
+        k (int): The number of items to sample.
 
     Returns:
-        list: A list of the original review dictionaries, now with added
-              'sentiment_polarity' and 'sentiment_label' keys.
+        list: A list containing k randomly sampled review dictionaries.
     """
+    reservoir = []
+    lines_seen = 0
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not line.strip():
+                continue  # Skip empty lines
 
-    # --- Stage 1: Collect Data for Analysis ---
-    # We need to keep both the original review dicts and the text for the pipeline.
-    original_reviews = []
-    texts_to_analyze = []
+            # The current item is the parsed JSON from the line
+            item = json.loads(line)
 
-    print("\n[PHASE 1: GATHERING REVIEWS FROM FILE]")
+            # Phase 1: Fill the reservoir with the first k items
+            if lines_seen < k:
+                reservoir.append(item)
+            # Phase 2: For items beyond k, randomly decide whether to replace an element
+            else:
+                # Generate a random index from 0 to lines_seen
+                j = random.randint(0, lines_seen)
+                # The probability of this being true is k / (lines_seen + 1)
+                if j < k:
+                    reservoir[j] = item
+
+            lines_seen += 1
+
+    if lines_seen < k:
+        print(
+            f"⚠️ Warning: File contained only {lines_seen} reviews, which is less than the requested {k}. Returning all reviews.")
+
+    return reservoir
+
+
+def load_reviews_from_file(file_path, max_reviews=None):
+    """
+    Loads reviews from a file. Uses memory-efficient Reservoir Sampling for random sampling.
+    """
+    print("\n[PHASE 1: LOADING REVIEWS FROM FILE]")
     print("-" * 50)
+
+    original_reviews = []
 
     try:
-        if max_reviews is not None and max_reviews > 0:
-            print(f"Attempting to select {max_reviews} random reviews...")
-            with open(file_path, 'r', encoding='utf-8') as f:
-                total_reviews = sum(1 for line in f if line.strip())
-            print(f"Found {total_reviews} total reviews.")
-
-            num_to_select = min(max_reviews, total_reviews)
-            selected_indices = set(random.sample(range(total_reviews), num_to_select))
-
-            print(f"Collecting {len(selected_indices)} randomly selected reviews...")
-            current_line_index = -1
+        # If max_reviews is not a positive number, load the entire file.
+        if not max_reviews or max_reviews <= 0:
+            print("Loading all reviews from the file...")
             with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    if not line.strip(): continue
-                    current_line_index += 1
-                    if current_line_index in selected_indices:
-                        review = json.loads(line)
-                        original_reviews.append(review)  # Keep the original dict
-                        texts_to_analyze.append(f"{review.get('title', '')}. {review.get('text', '')}")
-                        if len(original_reviews) >= num_to_select: break
+                    if line.strip():
+                        original_reviews.append(json.loads(line))
+        # Otherwise, use Reservoir Sampling for a memory-efficient random sample.
         else:
-            print("Collecting all reviews from the file...")
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip(): continue
-                    review = json.loads(line)
-                    original_reviews.append(review)  # Keep the original dict
-                    texts_to_analyze.append(f"{review.get('title', '')}. {review.get('text', '')}")
+            print(f"🚀 Using Reservoir Sampling to select {max_reviews} random reviews...")
+            print("(This is memory-safe and processes the file in a single pass)")
+            original_reviews = reservoir_sample_from_file(file_path, max_reviews)
 
     except FileNotFoundError:
-        print(f"\n[ERROR] The file '{file_path}' was not found.")
+        print(f"\n[ERROR] File '{file_path}' not found.")
         sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting.")
+        print(f"        Details: {e}")
+        return None
     except Exception as e:
-        print(f"\n[ERROR] An error occurred during file processing: {e}")
+        print(f"\n[ERROR] An unexpected error occurred during file loading: {e}")
         return None
 
-    if not original_reviews:
-        print("No reviews were collected to analyze.")
-        return []
-
-    print(f"Successfully collected {len(original_reviews)} reviews.")
-    print("-" * 50)
-
-    # --- Stage 2: Perform Batch Analysis ---
-    print(f"\n[PHASE 2: ANALYZING {len(texts_to_analyze)} TEXTS IN A BATCH]")
-    # The pipeline will process all texts at once for maximum efficiency.
-    # It returns a list of dictionaries: [{'label': ..., 'score': ...}, ...]
-    analysis_results = pipeline(texts_to_analyze)
-    print("Batch analysis complete.")
-    print("-" * 50)
-
-    # --- Stage 3: Merge Results (The Core Fix) ---
-    print("\n[PHASE 3: MERGING RESULTS WITH ORIGINAL DATA]")
-    # Loop through the original reviews and the analysis results simultaneously.
-    # zip() pairs them up: (review1, result1), (review2, result2), ...
-    for review, result in zip(original_reviews, analysis_results):
-        label = result['label'].lower().title()
-        score = result['score']
-
-        # Calculate polarity based on the label
-        if label == 'Negative':
-            polarity = -score
-        elif label == 'Positive':
-            polarity = score
-        else:  # 'Neutral'
-            polarity = 0.0
-
-        # Add the new sentiment data directly to the ORIGINAL review dictionary.
-        # This preserves the star rating and all other original data.
-        review['sentiment_polarity'] = polarity
-        review['sentiment_label'] = label
-
-    print("Merging complete. Data integrity maintained.")
-    print("-" * 50)
-
-    # Return the list of original review dictionaries, now enriched with sentiment data.
+    print(f"✅ Successfully loaded {len(original_reviews)} reviews into memory.")
     return original_reviews
 
 
-def analyze_review_sentiment_json_lines(file_path, max_reviews=None, analyze_function=text_blob_analyze):
-    """
-    Loads and analyzes reviews from a JSON Lines file, stopping after
-    'max_reviews' have been processed.
+def run_analysis(reviews_data, analysis_function, hardware_info, batch_size=256):
+    """Orchestrates analysis using the optimal strategy for the detected hardware."""
+    print("\n[PHASE 2: PERFORMING SENTIMENT ANALYSIS]")
+    print(f"Using analysis method: {analysis_function.__name__}")
+    print("-" * 50)
 
-    Args:
-        file_path (str): The path to the file.
-        max_reviews (int, optional): The maximum number of reviews to analyze.
-                                     If None, the entire file is processed.
-                                     Defaults to None.
-        analyze_function (function, optional):  function for performing sentiment analysis.
-                                                Defaults to text_blob_analysis
-    Returns:
-        list: A list of review dictionaries with added sentiment data.
-    """
-    analyzed_reviews = []
-    print("\n[PHASE 1: ANALYZING REVIEWS]")
-    print("-" * 30)
+    texts_to_analyze = [f"{review.get('title', '')}. {review.get('text', '')}" for review in reviews_data]
+    all_polarities = []
 
-    try:
-        if max_reviews is not None:
-            print(f"Attempting to select {max_reviews} random reviews from the file...")
+    # --- STRATEGY 1: TRANSFORMER ANALYSIS ---
+    if analysis_function == transformer_analyze_placeholder:
+        # --- SUB-STRATEGY: NVIDIA MULTI-GPU (CUDA) ---
+        if hardware_info["type"] == "cuda":
+            num_gpus = hardware_info["count"]
+            print(f"🚀 Starting Multi-GPU analysis on {num_gpus} CUDA device(s)...")
+            data_chunks = np.array_split(texts_to_analyze, num_gpus)
+            worker_args = [(chunk.tolist(), i, batch_size) for i, chunk in enumerate(data_chunks)]
+            with multiprocessing.Pool(processes=num_gpus) as pool:
+                results_chunks = pool.starmap(transformer_gpu_worker, worker_args)
+            all_polarities = [item for sublist in results_chunks for item in sublist]
 
-            # --- Pass 1: Count total lines/reviews in the file ---
-            with open(file_path, 'r', encoding='utf-8') as f:
-                total_reviews = sum(1 for line in f if line.strip())  # Count non-empty lines
+        # --- SUB-STRATEGY: APPLE SILICON (MPS) ---
+        elif hardware_info["type"] == "mps":
+            print(f"🚀 Starting GPU analysis on Apple Silicon (MPS) device...")
+            pipe = pipeline("sentiment-analysis", model=TRANSFORMER_MODEL_NAME, device="mps")
+            print(f"Analyzing {len(texts_to_analyze)} texts with batch size {batch_size}...")
+            # --- THE FIX IS HERE ---
+            results = pipe(
+                texts_to_analyze,
+                batch_size=batch_size,
+                truncation=True,
+                max_length=512  # Add this crucial argument
+            )
+            for r in results:
+                s = r['score']
+                all_polarities.append(
+                    -s if r['label'].lower() == 'negative' else (s if r['label'].lower() == 'positive' else 0.0))
 
-            print(f"Found {total_reviews} total reviews in the file.")
-
-            # Ensure we don't ask for more reviews than available
-            num_to_select = min(max_reviews, total_reviews)
-            if num_to_select < max_reviews:
-                print(
-                    f"---> Warning: Requested {max_reviews} reviews, but only {total_reviews} are available. Will process {num_to_select}.")
-
-            # --- Select N unique random line indices ---
-            # We use range(total_reviews) to get indices from 0 to total_reviews-1
-            selected_indices = set(random.sample(range(total_reviews), num_to_select))
-
-            # --- Pass 2: Read the file again and process only the selected lines ---
-            print(f"Processing {len(selected_indices)} randomly selected reviews...")
-
-            current_line_index = -1  # Start at -1 to handle non-empty line counting correctly
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue  # Skip empty lines, don't increment counter
-
-                    current_line_index += 1
-                    if current_line_index in selected_indices:
-                        review = json.loads(line)
-                        combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
-
-                        if model_pipeline is None:
-                            polarity = analyze_function(combined_text)
-                        else:
-                            polarity = analyze_function(combined_text,model_pipeline)
-
-                        if polarity > 0.05:
-                            sentiment = "Positive"
-                        elif polarity < -0.05:
-                            sentiment = "Negative"
-                        else:
-                            sentiment = "Neutral"
-
-                        # print(f"  -> Processing Review #{i + 1}...")
-                        # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
-
-                        review['sentiment_polarity'] = polarity
-                        review['sentiment_label'] = sentiment
-                        analyzed_reviews.append(review)
-
-                        # print( f"  -> Processed random review from line #{current_line_index + 1} ({len(
-                        # analyzed_reviews)}/{num_to_select})...")
-
-                        # Optional: Stop early if we've found all our random reviews
-                        if len(analyzed_reviews) >= num_to_select:
-                            print("\n---> Finished processing all selected random reviews.")
-                            break
+        # --- SUB-STRATEGY: CPU FALLBACK ---
         else:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for i, line in enumerate(f):
+            print(
+                f"⚠️ GPU not available for Transformer. Using {hardware_info['count']} CPU cores (this may be slow)...")
+            data_chunks = np.array_split(texts_to_analyze, hardware_info['count'])
+            with multiprocessing.Pool(processes=hardware_info['count']) as pool:
+                results_chunks = pool.map(transformer_cpu_worker, data_chunks)
+            all_polarities = [item for sublist in results_chunks for item in sublist]
 
-                    if not line.strip():
-                        continue
+    # --- STRATEGY 2: CPU-BOUND PARALLEL ANALYSIS (VADER, TEXTBLOB) ---
+    else:
+        num_cores = hardware_info['count']
+        print(f"🚀 Starting parallel analysis on {num_cores} CPU cores...")
+        with multiprocessing.Pool(processes=num_cores) as pool:
+            all_polarities = pool.map(analysis_function, texts_to_analyze)
 
-                    review = json.loads(line)
-                    combined_text = f"{review.get('title', '')}. {review.get('text', '')}"
+    print("✅ Analysis complete.")
 
-                    if model_pipeline is None:
-                        polarity = analyze_function(combined_text)
-                    else:
-                        polarity = analyze_function(combined_text, model_pipeline)
-
-                    if polarity > 0.05:
-                        sentiment = "Positive"
-                    elif polarity < -0.05:
-                        sentiment = "Negative"
-                    else:
-                        sentiment = "Neutral"
-
-                    # print(f"  -> Processing Review #{i + 1}...")
-                    # print(f"     Polarity Score: {polarity:.4f}  =>  Sentiment: {sentiment}")
-
-                    review['sentiment_polarity'] = polarity
-                    review['sentiment_label'] = sentiment
-                    analyzed_reviews.append(review)
-
-    except FileNotFoundError:
-        print(f"\n[ERROR] The file '{file_path}' was not found. Please check the path.")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"\n[ERROR] A line in '{file_path}' is not valid JSON. Halting analysis.")
-        print(f"        Details: {e}")
-        return None
-
-    print("-" * 30)
-    print("[PHASE 1 COMPLETE]")
-    return analyzed_reviews
+    # --- MERGE RESULTS ---
+    print("\n[PHASE 3: MERGING RESULTS WITH ORIGINAL DATA]")
+    for review, polarity in zip(reviews_data, all_polarities):
+        review['sentiment_polarity'] = polarity
+        review['sentiment_label'] = "Positive" if polarity > 0.05 else ("Negative" if polarity < -0.05 else "Neutral")
+    print("✅ Merging complete.")
+    print("-" * 50)
+    return reviews_data
 
 
-# --- 3. DEFINE THE SUMMARY FUNCTION (Unchanged) ---
+# --- [UNCHANGED] SUMMARY AND PLOTTING FUNCTIONS ---
+# print_analysis_summary, plot_sentiment_density_curve, etc. all remain the same.
 def print_analysis_summary(analyzed_reviews):
     """Prints a detailed summary of the analysis results to the terminal."""
     print("\n[PHASE 2: ANALYSIS SUMMARY]")
@@ -501,105 +491,65 @@ def plot_rating_vs_sentiment(analyzed_reviews):
     plt.grid(True)
 
 
-# --- 5. SCRIPT EXECUTION BLOCK ---
+# --- 6. SCRIPT EXECUTION BLOCK ---
+# --- 6. SCRIPT EXECUTION BLOCK ---
 if __name__ == "__main__":
+    # This is critical for CUDA + multiprocessing to work safely
+    multiprocessing.set_start_method('spawn', force=True)
 
-    print("INITIALIZING REQUIRED MODELS...")
-    model_pipeline = None
-    analyzer = SentimentIntensityAnalyzer()
+    # 1. Detect Hardware and Build Menu
+    hardware = detect_hardware()
 
-    sentiment_pipeline = pipeline(
-        "sentiment-analysis",
-        model="cardiffnlp/twitter-roberta-base-sentiment-latest",
-        tokenizer="cardiffnlp/twitter-roberta-base-sentiment-latest",
-        max_length=512,
-        truncation=True
-    )
-    print("REQUIRED MODELS LOADED...")
-    # ======================================================================
-    #                          CONFIGURATION
-    # ======================================================================
-    MAX_REVIEWS_TO_ANALYZE = int(input("SENTIMENT ANALYSIS\n"
-                                       "Enter number of entries for processing.\nEnter zero or negative for processing"
-                                       "entire file: "))
-    print("IF YOU USE OLLAMA,\nMAKE SURE YOUR OLLAMA MODEL IS INSTALLED AND RUNNING\n")
-    ANALYSIS_FUNCTION_OPTIONS = int(input("Enter Analysis Options:\n\tOllama (1)\n\tTextblob (2)\n\t"
-                                          "Vader (3)\n\tTransformer (4)\n"))
-    ANALYSIS_FUNCTION = None
-    if ANALYSIS_FUNCTION_OPTIONS == 1:
-        ANALYSIS_FUNCTION = ollama_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 2:
-        ANALYSIS_FUNCTION = text_blob_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 3:
-        ANALYSIS_FUNCTION = vander_analyze
-    elif ANALYSIS_FUNCTION_OPTIONS == 4:
-        model_pipeline = sentiment_pipeline
+    print("\n" + "=" * 50)
+    print("SENTIMENT ANALYSIS CONFIGURATION")
+    print("=" * 50)
 
-    if ANALYSIS_FUNCTION_OPTIONS < 1:
-        logging.error("No Valid Analysis Function Chosen! Quitting...")
+    MAX_REVIEWS_TO_ANALYZE = int(input("Enter number of entries to analyze (0 for all): "))
 
-    if ANALYSIS_FUNCTION is not None:
-        print(f"Using {ANALYSIS_FUNCTION} for analysis...")
+    # Build a dynamic menu based on hardware
+    print("\nEnter Analysis Method:")
+    print("  1. VADER (Fast, Parallel CPU)")
+    print("  2. TextBlob (Fast, Parallel CPU)")
+
+    if hardware['type'] == 'cuda':
+        print("  3. Transformer (Recommended: Multi-GPU, Optimized)")
+    elif hardware['type'] == 'mps':
+        print("  3. Transformer (Recommended: Apple Silicon GPU, Optimized)")
     else:
-        print(f"Using {model_pipeline} pipeline for analysis...")
-    # ======================================================================
+        print("  3. Transformer (Parallel CPU Fallback)")
+
+    ANALYSIS_OPTION = int(input("\nSelection: "))
+
+    function_map = {
+        1: vader_analyze,
+        2: textblob_analyze,
+        3: transformer_analyze_placeholder,
+    }
+    analysis_func = function_map.get(ANALYSIS_OPTION)
+
+    if not analysis_func:
+        print("Invalid selection! Quitting.")
+        sys.exit(1)
 
     start_time = time.time()
 
-    print("=" * 60)
-    print("      ENHANCED SENTIMENT ANALYSIS PROGRAM INITIALIZED")
-    print("=" * 60)
+    # --- Main Workflow ---
+    reviews = load_reviews_from_file("Cell_Phones_and_Accessories.jsonl", MAX_REVIEWS_TO_ANALYZE)
 
-    json_file = "Cell_Phones_and_Accessories.jsonl"
-    print(f"Target file: '{json_file}'")
+    if reviews:
+        # Run analysis using the optimal strategy
+        analysis_results = run_analysis(reviews, analysis_func, hardware, batch_size=128)
 
-    if MAX_REVIEWS_TO_ANALYZE > 0:
-        print(f"Analysis limit: Processing a maximum of {MAX_REVIEWS_TO_ANALYZE} reviews.")
-    else:
-        print("Analysis limit: Processing all reviews in the file.")
-        MAX_REVIEWS_TO_ANALYZE = None
+        end_time = time.time()
+        print(f"\n✅ Total Analysis Finished In {end_time - start_time:.2f} seconds.\n")
 
-    analysis_results = None
-    if ANALYSIS_FUNCTION_OPTIONS < 4:
-        analysis_results = analyze_review_sentiment_json_lines(
-            json_file,
-            MAX_REVIEWS_TO_ANALYZE,
-            ANALYSIS_FUNCTION
-        )
-    else:
-        analysis_results = pipeline_analyze_review_sentiment(json_file,MAX_REVIEWS_TO_ANALYZE,model_pipeline)
-
-    end_time = time.time()
-    duration = end_time - start_time
-    print("\n")
-    print("=" * 60)
-    print(f"\nAnalysis Finished In {duration} seconds.\n")
-    print("=" * 60)
-
-    if analysis_results:
+        # Generate summary and plots
         print_analysis_summary(analysis_results)
-
-        print("\n[PHASE 3: GENERATING GRAPHS]")
-        # --- Call all plotting functions ---
-        # New plots fulfilling the request
-        plot_sentiment_density_curve(analysis_results)  # Spectrum/Density/Curve
-        plot_rating_sentiment_heatmap(analysis_results)  # Heatmap
-        # plot_sentiment_bubble_chart(analysis_results)  # Bubble
-        plot_avg_sentiment_by_rating_curve(analysis_results)  # Explicit Curve
-
-        # Original plots
+        plot_rating_sentiment_heatmap(analysis_results)
         plot_sentiment_distribution(analysis_results)
         plot_rating_vs_sentiment(analysis_results)
-        print("[PHASE 3 COMPLETE]")
-
-        print("\n[FINAL STEP: DISPLAYING PLOTS]")
-        print("ALL REVIEWS OUTSIDE OF [-1, 1] RANGE MUST BE DISCARDED!!!\n")
-        print("Close the plot windows to exit the program.")
-        print("=" * 60)
-
-        plt.tight_layout()
+        plot_avg_sentiment_by_rating_curve(analysis_results)
+        plot_sentiment_density_curve(analysis_results)
         plt.show()
     else:
-        print("\n--- Analysis failed or was halted. No results to show. ---")
-        print("=" * 60)
-
+        print("\n--- Analysis failed or no data was loaded. ---")
