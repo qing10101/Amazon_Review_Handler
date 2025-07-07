@@ -259,8 +259,11 @@ def run_analysis(reviews_data, analysis_function, hardware_info, batch_size=256)
         if hardware_info["type"] == "cuda":
             num_gpus = hardware_info["count"]
             print(f"🚀 Starting Multi-GPU analysis on {num_gpus} CUDA device(s)...")
-            data_chunks = np.array_split(texts_to_analyze, num_gpus)
-            worker_args = [(chunk.tolist(), i, batch_size) for i, chunk in enumerate(data_chunks)]
+            # New, memory-efficient Python implementation:
+            print(f"Splitting {len(texts_to_analyze)} texts into {num_gpus} chunks without NumPy...")
+            chunk_size = (len(texts_to_analyze) + num_gpus - 1) // num_gpus  # Ceiling division
+            data_chunks = [texts_to_analyze[i:i + chunk_size] for i in range(0, len(texts_to_analyze), chunk_size)]
+            worker_args = [(chunk, i, batch_size) for i, chunk in enumerate(data_chunks)]
             with multiprocessing.Pool(processes=num_gpus) as pool:
                 results_chunks = pool.starmap(transformer_gpu_worker, worker_args)
             all_polarities = [item for sublist in results_chunks for item in sublist]
