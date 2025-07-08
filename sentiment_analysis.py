@@ -120,12 +120,11 @@ def transformer_gpu_worker(texts_chunk, gpu_id, batch_size):
         torch_dtype=torch.float16 # Use half-precision for huge speedup on supported GPUs
     )
     print(f"[GPU Worker {gpu_id}] Pipeline loaded. Analyzing {len(texts_chunk)} texts with batch size {batch_size}...")
-    # --- THE FIX IS HERE ---
     results = pipe(
         texts_chunk,
         batch_size=batch_size,
         truncation=True,
-        max_length=512  # Add this crucial argument
+        max_length=512
     )
     polarities = []
     for r in results:
@@ -142,12 +141,11 @@ def transformer_cpu_worker(texts_chunk):
     pipe = pipeline("sentiment-analysis", model=TRANSFORMER_MODEL_NAME, device="cpu")
     print(f"[CPU Worker {os.getpid()}] Pipeline loaded. Analyzing {len(texts_chunk)} texts...")
     # Use a smaller batch size for CPU as large batches can be less efficient
-    # --- THE FIX IS HERE ---
     results = pipe(
         texts_chunk,
-        batch_size=16,  # A smaller batch size is often better for CPU
+        batch_size=16,
         truncation=True,
-        max_length=512  # Add this crucial argument
+        max_length=512
     )
     polarities = []
     for r in results:
@@ -313,7 +311,7 @@ def run_analysis(reviews_data, analysis_function, hardware_info, batch_size=256)
     return reviews_data
 
 
-# --- [UNCHANGED] SUMMARY AND PLOTTING FUNCTIONS ---
+# --- 5. SUMMARY ---
 # print_analysis_summary, plot_sentiment_density_curve, etc. all remain the same.
 def print_analysis_summary(analyzed_reviews):
     """Prints a detailed summary of the analysis results to the terminal."""
@@ -352,7 +350,7 @@ def print_analysis_summary(analyzed_reviews):
     print("[PHASE 2 COMPLETE]")
 
 
-# --- 4. PLOTTING FUNCTIONS ---
+# --- 6. PLOTTING FUNCTIONS ---
 # This section has been expanded with new graph types.
 
 def plot_sentiment_density_curve(analyzed_reviews):
@@ -494,8 +492,7 @@ def plot_rating_vs_sentiment(analyzed_reviews):
     plt.grid(True)
 
 
-# --- 6. SCRIPT EXECUTION BLOCK ---
-# --- 6. SCRIPT EXECUTION BLOCK ---
+# --- 7. SCRIPT EXECUTION BLOCK ---
 if __name__ == "__main__":
     # This is critical for CUDA + multiprocessing to work safely
     multiprocessing.set_start_method('spawn', force=True)
