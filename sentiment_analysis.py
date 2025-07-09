@@ -56,52 +56,6 @@ def detect_hardware():
 
 
 # --- 3. SENTIMENT ANALYSIS FUNCTIONS ---
-def parse_first_number_from_llm_response(text: str):
-    """
-    Parses the first number (integer or float, positive or negative) from a string.
-
-    Generated code
-    Args:
-        text: The input string to search for a number.
-
-    Returns:
-        The first number found as an int or float, or None if no number is found.
-    """
-    # This regular expression is designed to find the first integer or float.
-    # -?         - an optional negative sign
-    # \d+        - one or more digits
-    # (\.\d+)?   - an optional decimal point followed by one or more digits
-    # The combination covers integers (e.g., "123", "-45") and floats (e.g., "19.99", "-0.5").
-    match = re.search(r'-?\d+(\.\d+)?', text)
-
-    if match:
-        # If a match is found, extract the matched string
-        number_str = match.group(0)
-
-        # Convert the string to a number (float or int)
-        if '.' in number_str:
-            return float(number_str)
-        else:
-            return int(number_str)
-
-    # If no number is found, return None
-    return None
-
-
-def llm_prompt_constructor(review_text: str):
-    prompt = (f"You are asked to perform sentiment analysis for a user review.\nThe review is: {review_text}\n"
-              f"Respond with a sentiment score with two digits after decimal that is between -1 (extreme negative) and "
-              f"1 (extreme positive)")
-    return prompt
-
-
-def ollama_analyze(review_text: str):
-    response = ask_ollama(llm_prompt_constructor(review_text))
-    polarity = parse_first_number_from_llm_response(response)
-    if polarity is None: return 0.0
-    return max(-1.0, min(1.0, polarity))
-
-
 def textblob_analyze(review_text: str):
     polarity = TextBlob(review_text).sentiment.polarity
     return max(-1.0, min(1.0, polarity))
